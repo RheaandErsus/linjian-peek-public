@@ -109,6 +109,75 @@ function makeServer() {
   const server = new McpServer({ name: "掌心窗", version: "0.3.4.1-public" });
 
   server.tool(
+    "get_current_time",
+    "读取当前真实时间。当用户提到“现在、几点、今天、明天、凌晨、上午、下午、晚上、多久”等时间相关内容时优先调用。默认返回北京时间，不依赖手机端或掌心窗 App 后台运行。",
+    {
+      timezone: z.string().default("Asia/Shanghai").describe("IANA 时区名称，例如 Asia/Shanghai、Asia/Singapore、Europe/Paris。默认 Asia/Shanghai。")
+    },
+    async ({ timezone = "Asia/Shanghai" }) => {
+      const now = new Date();
+      let parts;
+
+      try {
+        parts = new Intl.DateTimeFormat("zh-CN", {
+          timeZone: timezone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          weekday: "long",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hourCycle: "h23"
+        }).formatToParts(now);
+      } catch {
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              ok: false,
+              error: "invalid_timezone",
+              message: `无法识别时区：${timezone}。请使用 IANA 时区名称，例如 Asia/Shanghai。`
+            }, null, 2)
+          }],
+          isError: true
+        };
+      }
+
+      const value = (type) => parts.find((part) => part.type === type)?.value || "";
+      const hour = Number(value("hour"));
+      const dayPeriod =
+        hour < 5 ? "凌晨" :
+        hour < 9 ? "早上" :
+        hour < 12 ? "上午" :
+        hour < 14 ? "中午" :
+        hour < 18 ? "下午" :
+        hour < 23 ? "晚上" : "深夜";
+
+      const localDate = `${value("year")}-${value("month")}-${value("day")}`;
+      const localTime = `${value("hour")}:${value("minute")}:${value("second")}`;
+      const result = {
+        ok: true,
+        timezone,
+        local_date: localDate,
+        local_time: localTime,
+        local_datetime: `${localDate} ${localTime}`,
+        weekday: value("weekday"),
+        day_period: dayPeriod,
+        iso_utc: now.toISOString(),
+        unix_ms: now.getTime()
+      };
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(result, null, 2)
+        }]
+      };
+    }
+  );
+
+  server.tool(
     "peek_screen",
     "向掌心窗手机端请求一张新截图，并等待手机上传后把图片返回。手机端必须已启动、无障碍截图权限已开启。",
     { wait_seconds: z.number().int().min(3).max(60).default(25).describe("等待手机上传新截图的秒数，默认 25。Render 免费实例刚醒时可以调大。") },
