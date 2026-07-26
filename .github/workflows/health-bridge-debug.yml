@@ -6,6 +6,10 @@ on:
     paths:
       - 'health-bridge/**'
       - '.github/workflows/health-bridge-debug.yml'
+  pull_request:
+    paths:
+      - 'health-bridge/**'
+      - '.github/workflows/health-bridge-debug.yml'
 
 permissions:
   contents: read
