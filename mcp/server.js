@@ -41,6 +41,11 @@ async function commandStatus(id) {
   return await res.json();
 }
 
+async function healthState(deviceId = DEFAULT_DEVICE) {
+  const res = await linjianFetch(`/api/health/state?device_id=${encodeURIComponent(deviceId)}`);
+  return await res.json();
+}
+
 
 function weatherCodeText(code) {
   const map = {0:"晴",1:"大部晴朗",2:"多云",3:"阴",45:"雾",48:"雾凇",51:"小毛毛雨",53:"毛毛雨",55:"强毛毛雨",61:"小雨",63:"中雨",65:"大雨",71:"小雪",73:"中雪",75:"大雪",80:"阵雨",81:"中等阵雨",82:"强阵雨",95:"雷暴",96:"雷暴伴冰雹",99:"强雷暴伴冰雹"};
@@ -106,7 +111,7 @@ async function fetchLatestImage() {
 }
 
 function makeServer() {
-  const server = new McpServer({ name: "掌心窗", version: "0.3.4.1-public" });
+  const server = new McpServer({ name: "掌心窗", version: "0.4.0-public-health-bridge" });
 
   server.tool(
     "get_current_time",
@@ -308,6 +313,74 @@ function makeServer() {
     const data = await res.json();
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   });
+
+  server.tool(
+    "get_health_summary",
+    "读取 Erses 健康桥最近上传的 Health Connect 摘要，包括今日步数、距离、活动、心率、静息心率、血氧和最近睡眠。用户提到今天状态、疲惫、头晕、运动、步数、心率、血氧或身体感受时，应主动调用本工具核对数据；仅用于趋势与生活照看，不作医疗诊断。",
+    { device_id: z.string().default(DEFAULT_DEVICE) },
+    async ({ device_id = DEFAULT_DEVICE }) => {
+      const data = await healthState(device_id);
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "get_sleep_summary",
+    "读取最近一次完整睡眠和近 7 日每日活动摘要。用户提到昨晚睡得怎样、困、睡眠、熬夜、起床状态或要安排学习强度时，应主动调用本工具，而不是凭感觉猜测。",
+    { device_id: z.string().default(DEFAULT_DEVICE) },
+    async ({ device_id = DEFAULT_DEVICE }) => {
+      const data = await healthState(device_id);
+      const envelope = data?.health_state || null;
+      const health = envelope?.health || null;
+      const result = {
+        ok: Boolean(health),
+        device_id,
+        received_at: envelope?.received_at || null,
+        generated_at: health?.generated_at || null,
+        latest_sleep: health?.latest_sleep || null,
+        daily_7d: health?.daily_7d || []
+      };
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "get_health_trends",
+    "读取最近 7 日步数、活动时长、距离和热量趋势。用户讨论近期活动量、久坐、运动计划或连续几天的身体状态时，应主动调用。健康数据可能有同步延迟，回答时需说明最近生成时间。",
+    { device_id: z.string().default(DEFAULT_DEVICE) },
+    async ({ device_id = DEFAULT_DEVICE }) => {
+      const data = await healthState(device_id);
+      const envelope = data?.health_state || null;
+      const health = envelope?.health || null;
+      const result = {
+        ok: Boolean(health),
+        device_id,
+        received_at: envelope?.received_at || null,
+        generated_at: health?.generated_at || null,
+        timezone: health?.timezone || null,
+        daily_7d: health?.daily_7d || []
+      };
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "get_wellbeing_snapshot",
+    "把掌心窗生活状态与 Erses 健康桥摘要合并读取。用户让你主动管一管、看看她现在怎么样、安排当天节奏，或同时涉及手机使用和身体状态时优先调用。不要用单次手环读数下诊断。",
+    { device_id: z.string().default(DEFAULT_DEVICE) },
+    async ({ device_id = DEFAULT_DEVICE }) => {
+      const [lifeRes, health] = await Promise.all([
+        linjianFetch(`/api/life_state?device_id=${encodeURIComponent(device_id)}`).then((r) => r.json()),
+        healthState(device_id)
+      ]);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({ ok: true, device_id, life: lifeRes, health }, null, 2)
+        }]
+      };
+    }
+  );
 
   server.tool("get_weather_state", "按掌心窗当前天气地区查询实时天气，并生成出门建议。不会截图；如果手机端没有设置当前地区，会返回缺少城市。", { device_id: z.string().default(DEFAULT_DEVICE), city: z.string().default("") }, async ({ device_id = DEFAULT_DEVICE, city = "" }) => {
     const res = await linjianFetch(`/api/life_state?device_id=${encodeURIComponent(device_id)}`);
@@ -526,7 +599,7 @@ function makeServer() {
 const app = express();
 app.use(express.json({ limit: "32mb" }));
 app.get("/", (_req, res) => res.type("text/plain").send("掌心窗 unified MCP is running. Use /mcp for Streamable HTTP, or /sse for SSE."));
-app.get("/health", (_req, res) => res.json({ ok: true, service: "linjian-unified-mcp", version: "0.3.4.1", has_url: Boolean(LINJIAN_URL), has_token: Boolean(LINJIAN_TOKEN) }));
+app.get("/health", (_req, res) => res.json({ ok: true, service: "linjian-unified-mcp", version: "0.4.0-public-health-bridge", has_url: Boolean(LINJIAN_URL), has_token: Boolean(LINJIAN_TOKEN) }));
 app.post("/mcp", async (req, res) => {
   try { const server = makeServer(); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); res.on("close", () => transport.close()); await server.connect(transport); await transport.handleRequest(req, res, req.body); }
   catch (err) { console.error(err); if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: String(err?.message || err) }, id: null }); }
