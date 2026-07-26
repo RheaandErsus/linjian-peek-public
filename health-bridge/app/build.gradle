@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace "dev.linjian.healthbridge"
-    compileSdk 35
+    compileSdk 36
 
     defaultConfig {
         applicationId "dev.linjian.healthbridge"
