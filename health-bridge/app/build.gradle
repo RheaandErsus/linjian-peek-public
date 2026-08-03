@@ -11,8 +11,8 @@ android {
         applicationId "dev.linjian.healthbridge"
         minSdk 28
         targetSdk 35
-        versionCode 40000
-        versionName "0.4.0"
+        versionCode 40100
+        versionName "0.4.1"
     }
 
     buildFeatures {
