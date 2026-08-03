@@ -12,7 +12,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.ActivityResultLauncher
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.lifecycleScope
@@ -34,20 +34,17 @@ class MainActivity : ComponentActivity() {
     private lateinit var autoSync: CheckBox
     private lateinit var syncButton: Button
 
-    private val healthPermissionLauncher = registerForActivityResult(
-        PermissionController.createRequestPermissionResultContract()
-    ) {
-        refreshPermissionStatus()
-    }
-
-    private val notificationPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { }
+    // Some Android 11/OEM Health Connect providers can throw while the permission
+    // contract is being created. Keep that failure inside the UI instead of letting
+    // it terminate the whole activity before the first frame is drawn.
+    private var healthPermissionLauncher: ActivityResultLauncher<Set<String>>? = null
+    private var healthLauncherError: Throwable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         title = "Erses 健康桥"
         setContentView(buildUi())
+        registerHealthPermissionLauncher()
         loadSettings()
         bindActions()
         refreshPermissionStatus()
@@ -56,8 +53,23 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        refreshPermissionStatus()
-        refreshLastSync()
+        if (::permissionStatus.isInitialized && ::syncButton.isInitialized) {
+            refreshPermissionStatus()
+            refreshLastSync()
+        }
+    }
+
+    private fun registerHealthPermissionLauncher() {
+        try {
+            healthPermissionLauncher = registerForActivityResult(
+                PermissionController.createRequestPermissionResultContract()
+            ) {
+                refreshPermissionStatus()
+            }
+        } catch (error: Throwable) {
+            healthLauncherError = error
+            healthPermissionLauncher = null
+        }
     }
 
     private fun buildUi(): ScrollView {
@@ -142,31 +154,67 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestHealthPermissions() {
-        val status = HealthConnectClient.getSdkStatus(this)
-        if (status != HealthConnectClient.SDK_AVAILABLE) {
-            permissionStatus.text = "Health Connect 当前不可用，请确认“健康数据共享”已经安装并启用。"
+        val launcher = healthPermissionLauncher
+        if (launcher == null) {
+            showHealthError("健康权限窗口初始化失败", healthLauncherError)
             return
         }
-        healthPermissionLauncher.launch(HealthPermissions.requested(this))
+
+        try {
+            val status = HealthConnectClient.getSdkStatus(this)
+            if (status != HealthConnectClient.SDK_AVAILABLE) {
+                permissionStatus.text = "Health Connect 当前不可用，请确认“健康数据共享”已经安装并启用。"
+                return
+            }
+            launcher.launch(HealthPermissions.requested(this))
+        } catch (error: Throwable) {
+            showHealthError("无法打开健康权限窗口", error)
+        }
     }
 
     private fun refreshPermissionStatus() {
-        val status = HealthConnectClient.getSdkStatus(this)
+        val launcherFailure = healthLauncherError
+        if (launcherFailure != null) {
+            showHealthError("健康权限组件不兼容", launcherFailure)
+            return
+        }
+
+        val status = try {
+            HealthConnectClient.getSdkStatus(this)
+        } catch (error: Throwable) {
+            showHealthError("检查 Health Connect 时出错", error)
+            return
+        }
+
         if (status != HealthConnectClient.SDK_AVAILABLE) {
             permissionStatus.text = "Health Connect 不可用"
             syncButton.isEnabled = false
             return
         }
+
         lifecycleScope.launch {
-            val foreground = HealthPermissions.hasForeground(this@MainActivity)
-            val background = HealthPermissions.hasBackground(this@MainActivity)
-            permissionStatus.text = when {
-                foreground && background -> "已允许五类健康数据读取，也允许后台同步。"
-                foreground -> "已允许五类健康数据读取；后台读取尚未允许。"
-                else -> "尚未完整授权：步数、活动、睡眠、心率和血氧。"
+            try {
+                val foreground = HealthPermissions.hasForeground(this@MainActivity)
+                val background = HealthPermissions.hasBackground(this@MainActivity)
+                permissionStatus.text = when {
+                    foreground && background -> "已允许五类健康数据读取，也允许后台同步。"
+                    foreground -> "已允许五类健康数据读取；后台读取尚未允许。"
+                    else -> "尚未完整授权：步数、活动、睡眠、心率和血氧。"
+                }
+                syncButton.isEnabled = foreground
+            } catch (error: Throwable) {
+                showHealthError("读取健康权限状态失败", error)
             }
-            syncButton.isEnabled = foreground
         }
+    }
+
+    private fun showHealthError(prefix: String, error: Throwable?) {
+        val type = error?.javaClass?.simpleName.orEmpty()
+        val detail = error?.message?.replace('\n', ' ')?.take(120).orEmpty()
+        val diagnostic = listOf(type, detail).filter { it.isNotBlank() }.joinToString(": ")
+        permissionStatus.text = if (diagnostic.isBlank()) prefix else "$prefix（$diagnostic）"
+        syncButton.isEnabled = false
+        if (diagnostic.isNotBlank()) BridgePrefs.recordError(this, "$prefix：$diagnostic")
     }
 
     private fun syncNow() {
