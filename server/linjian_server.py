@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""掌心窗 v0.3.4.1 unified server.
+"""掌心窗 v0.4.0 unified server.
 
 零依赖标准库版，负责：
 1. 给手机端下发 peek / open_app / back / home / recents / tap / swipe / set_alarm / send_notification 命令；
 2. 接收手机端上传的截图；
 3. 保存手机端最近状态；
-4. 提供 /api/latest 与 /api/latest.json 给 MCP 读取。
+4. 接收 Erses 健康桥上传的 Health Connect 摘要；
+5. 提供 /api/latest 与 /api/latest.json 给 MCP 读取。
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 DEFAULT_PORT = 8513
 DEFAULT_KEEP = 3
 MAX_UPLOAD_BYTES = 24 * 1024 * 1024
-VERSION = "0.3.4.1-public"
+VERSION = "0.4.0-public-health-bridge"
 DEFAULT_DEVICE = os.environ.get("LINJIAN_DEFAULT_DEVICE", "android-phone")
 
 ERR_BAD_TOKEN = "LINJIAN_ERR_BAD_TOKEN"
@@ -101,6 +102,7 @@ class State:
         self.command_history: dict[str, dict] = {}
         self.commands_lock = Lock()
         self.device_states: dict[str, dict] = {}
+        self.health_states: dict[str, dict] = {}
         self.unlock_requests: list[dict] = []
 
     def latest_shot(self) -> Path | None:
@@ -213,6 +215,16 @@ class Handler(BaseHTTPRequestHandler):
             device_id = qs.get("device_id", [DEFAULT_DEVICE])[0] or DEFAULT_DEVICE
             state = self.state.device_states.get(device_id)
             self._json(200, {"ok": True, "device_id": device_id, "state": state, "life_state": state}); return
+        if path == "/api/health/state":
+            if not self._require_token(): return
+            device_id = qs.get("device_id", [DEFAULT_DEVICE])[0] or DEFAULT_DEVICE
+            state = self.state.health_states.get(device_id)
+            self._json(200, {
+                "ok": True,
+                "device_id": device_id,
+                "has_health_data": bool(state),
+                "health_state": state,
+            }); return
         if path == "/api/command/status":
             if not self._require_token(): return
             cid = qs.get("id", [""])[0]
@@ -244,6 +256,24 @@ class Handler(BaseHTTPRequestHandler):
             data = self._read_json(); device_id = data.get("device_id") or DEFAULT_DEVICE
             data["updated_at"] = now_iso(); self.state.device_states[device_id] = data
             self._json(200, {"ok": True, "device_id": device_id}); return
+        if path == "/api/health/state":
+            if not self._require_token(): return
+            data = self._read_json()
+            device_id = data.get("device_id") or DEFAULT_DEVICE
+            health = data.get("health")
+            if not isinstance(health, dict):
+                self._json(400, {"ok": False, "error": "invalid_health_payload"}); return
+            record = {
+                "device_id": device_id,
+                "received_at": now_iso(),
+                "health": health,
+            }
+            self.state.health_states[device_id] = record
+            self._json(200, {
+                "ok": True,
+                "device_id": device_id,
+                "received_at": record["received_at"],
+            }); return
         if path == "/api/device/report":
             if not self._require_token(): return
             data = self._read_json()

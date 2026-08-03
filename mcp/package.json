@@ -1,9 +1,9 @@
 {
   "name": "linjian-unified-mcp",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Unified MCP server for 掌心窗: screenshot, phone control, alarm, notification.",
+  "description": "Unified MCP server for 掌心窗 and Erses Health Bridge.",
   "scripts": {
     "start": "node server.js"
   },
