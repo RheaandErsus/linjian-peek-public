@@ -482,6 +482,23 @@ SKIN_DESCRIPTIONS = {
     ),
 }
 
+SERVER_INSTRUCTIONS = {
+    "en": (
+        "For every user message, make a fresh per-turn decision about "
+        "render_thinking_block. Before the final answer, call it exactly once for each "
+        "non-trivial message, including follow-ups and topic changes. A call in an "
+        "earlier turn never satisfies the current turn. Skip only trivial acknowledgments "
+        "or when the user explicitly asks not to show a thinking card. Choose style, effort, "
+        "and skin from the current message, then continue with the normal answer."
+    ),
+    "zh-CN": (
+        "对每条用户消息，都重新按本轮判断是否调用 render_thinking_block。每条需要实质回答的"
+        "消息（包括追问和换话题）都要在最终回答前恰好调用一次；上一轮的调用不能代替本轮。"
+        "只有纯确认、纯致谢等无需实质回答的消息，或用户明确要求不显示思考卡时才跳过。"
+        "根据本轮内容选择 style、effort 和 skin，调用后继续正常回答。"
+    ),
+}
+
 TOOL = {
     "name": "render_thinking_block",
     "title": "Render thinking block",
@@ -607,6 +624,7 @@ def handle(req):
                 "tools": {"listChanged": False},
                 "resources": {"listChanged": False},
             },
+            "instructions": SERVER_INSTRUCTIONS[PROMPT_LANGUAGE],
             "serverInfo": {"name": "gpt-thinking-block-mcp", "version": "1.0.0"},
         }}
     if method in ("tools/list", "notifications/initialized"):
