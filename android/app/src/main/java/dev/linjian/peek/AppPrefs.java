@@ -39,6 +39,8 @@ public class AppPrefs {
     public static final String KEY_SERVICE_HEARTBEAT_MS = "service_heartbeat_ms";
     public static final String KEY_LAST_SYNC_MS = "last_sync_ms";
     public static final String KEY_LAST_SYNC_ERROR = "last_sync_error";
+    public static final String KEY_CURBOX_PACKAGE = "curbox_package";
+    public static final String KEY_CURBOX_ALLOW_REMOTE_RELAX = "curbox_allow_remote_relax";
 
     public static final String KEY_FOREGROUND_POPUP = "foreground_popup_enabled";
     public static final String KEY_CUSTOM_APPS = "custom_apps_lines";

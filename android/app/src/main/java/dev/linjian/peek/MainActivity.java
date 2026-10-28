@@ -40,8 +40,9 @@ import java.net.URL;
 import java.util.Calendar;
 
 public class MainActivity extends Activity {
-    private static final String APP_VERSION_NAME = "0.3.4.1";
-    private static final int APP_VERSION_CODE = 30401;
+    private static final int REQUEST_CURBOX_PERMISSION = 42;
+    private static final String APP_VERSION_NAME = "0.4.0";
+    private static final int APP_VERSION_CODE = 40000;
     private static final String DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/linzhi-524/linjian-peek-public/main/update.json";
     private int latestVersionCode = APP_VERSION_CODE;
     private String latestVersionName = APP_VERSION_NAME;
@@ -49,12 +50,12 @@ public class MainActivity extends Activity {
     private String latestChangelog = "";
 
     private TextView headerTitle, headerSubtitle, statusText, debugText, lifeStatusText, lifeSummaryText, knownAppsText, homeModeStatusText, gateStatusText;
-    private TextView overviewBatteryText, overviewAppText, overviewScreenText, overviewWeatherText, overviewAdviceText, weatherLocationsText, themeText, versionStatusText, updateChangelogText;
+    private TextView overviewBatteryText, overviewAppText, overviewScreenText, overviewWeatherText, overviewAdviceText, weatherLocationsText, themeText, versionStatusText, updateChangelogText, curboxStatusText;
     private Button toggleButton, accessibilityButton, usageAccessButton, testButton, openXhsButton, openChatGptButton, homeButton, backButton, recentsButton, alarmTestButton, notifyTestButton, refreshLifeButton;
     private Button addPackageButton, testPackageButton, sequenceTestButton, refreshGateButton, addGateAppButton, addWeatherLocationButton, setCurrentWeatherButton;
-    private Button themeCreamButton, themeBlueButton, themePeachButton, themeNightButton, themeMintButton;
+    private Button themeCreamButton, themeBlueButton, themePeachButton, themeNightButton, themeMintButton, curboxConnectButton, curboxPermissionButton;
     private Button drawerConnectionButton, drawerPermissionButton, drawerControlTestButton, drawerKnownAppsButton, drawerHomeModeButton, drawerGateAddButton, drawerReminderButton, drawerCycleButton, drawerDebugButton, drawerLifeDetailsButton, drawerAppGateButton, drawerWeatherButton, drawerVersionButton, checkUpdateButton, downloadUpdateButton;
-    private CheckBox remindersEnabled, batteryRuleEnabled, screenRuleEnabled, waterRuleEnabled, restRuleEnabled, cycleEnabled, foregroundPopupEnabled, homeModeEnabled, homeModeForceEnabled, appGateEnabled;
+    private CheckBox remindersEnabled, batteryRuleEnabled, screenRuleEnabled, waterRuleEnabled, restRuleEnabled, cycleEnabled, foregroundPopupEnabled, homeModeEnabled, homeModeForceEnabled, appGateEnabled, curboxRemoteRelaxEnabled;
     private Button tabSettings, tabSee, tabControl, tabLife, tabGate, tabDebug;
     private View sectionSettings, sectionSee, sectionControl, sectionLife, sectionGate, sectionDebug;
     private View drawerConnection, drawerPermission, drawerControlTest, drawerKnownApps, drawerHomeMode, drawerGateAdd, drawerReminder, drawerCycle, drawerDebug, drawerAppGate, drawerWeather, drawerVersion;
@@ -79,8 +80,10 @@ public class MainActivity extends Activity {
         setContentView(R.layout.activity_main);
         bindViews();
         loadSettings();
+        CurboxClient.ensureBound(this);
+        CurboxClient.refreshAsync(this);
 
-        DebugState.append(this, "掌心窗 v0.3.4.1-public 显示适配版已打开");
+        DebugState.append(this, "掌心窗·守护版 v0.4.0 已打开");
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 13);
         serviceRunning = CompanionService.isRunning();
         updateUI();
@@ -106,6 +109,17 @@ public class MainActivity extends Activity {
         if (setCurrentWeatherButton != null) setCurrentWeatherButton.setOnClickListener(v -> addWeatherLocation(true));
         if (checkUpdateButton != null) checkUpdateButton.setOnClickListener(v -> checkForUpdates(true));
         if (downloadUpdateButton != null) downloadUpdateButton.setOnClickListener(v -> downloadLatestApk());
+        if (curboxConnectButton != null) curboxConnectButton.setOnClickListener(v -> {
+            CurboxClient.ensureBound(this); CurboxClient.refreshAsync(this);
+            Toast.makeText(this, "正在连接 Curbox", Toast.LENGTH_SHORT).show();
+            uiHandler.postDelayed(this::updateUI, 500);
+        });
+        if (curboxPermissionButton != null) curboxPermissionButton.setOnClickListener(v ->
+                Toast.makeText(this, CurboxClient.requestPermission(this, REQUEST_CURBOX_PERMISSION), Toast.LENGTH_SHORT).show());
+        if (curboxRemoteRelaxEnabled != null) curboxRemoteRelaxEnabled.setOnCheckedChangeListener((button, checked) -> {
+            AppPrefs.get(this).edit().putBoolean(AppPrefs.KEY_CURBOX_ALLOW_REMOTE_RELAX, checked).apply();
+            updateUI();
+        });
 
         bindThemeButton(themeCreamButton, "奶油绿"); bindThemeButton(themeBlueButton, "雾蓝白"); bindThemeButton(themePeachButton, "白桃粉"); bindThemeButton(themeNightButton, "夜航黑"); bindThemeButton(themeMintButton, "薄荷透明");
 
@@ -135,12 +149,12 @@ public class MainActivity extends Activity {
 
     private void bindViews() {
         headerTitle = findViewById(R.id.headerTitle); headerSubtitle = findViewById(R.id.headerSubtitle); statusText = findViewById(R.id.statusText); debugText = findViewById(R.id.debugText); lifeStatusText = findViewById(R.id.lifeStatusText); lifeSummaryText = findViewById(R.id.lifeSummaryText); knownAppsText = findViewById(R.id.knownAppsText); homeModeStatusText = findViewById(R.id.homeModeStatusText); gateStatusText = findViewById(R.id.gateStatusText);
-        overviewBatteryText = findViewById(R.id.overviewBatteryText); overviewAppText = findViewById(R.id.overviewAppText); overviewScreenText = findViewById(R.id.overviewScreenText); overviewWeatherText = findViewById(R.id.overviewWeatherText); overviewAdviceText = findViewById(R.id.overviewAdviceText); weatherLocationsText = findViewById(R.id.weatherLocationsText); themeText = findViewById(R.id.themeText); versionStatusText = findViewById(R.id.versionStatusText); updateChangelogText = findViewById(R.id.updateChangelogText);
+        overviewBatteryText = findViewById(R.id.overviewBatteryText); overviewAppText = findViewById(R.id.overviewAppText); overviewScreenText = findViewById(R.id.overviewScreenText); overviewWeatherText = findViewById(R.id.overviewWeatherText); overviewAdviceText = findViewById(R.id.overviewAdviceText); weatherLocationsText = findViewById(R.id.weatherLocationsText); themeText = findViewById(R.id.themeText); versionStatusText = findViewById(R.id.versionStatusText); updateChangelogText = findViewById(R.id.updateChangelogText); curboxStatusText = findViewById(R.id.curboxStatusText);
         toggleButton = findViewById(R.id.toggleButton); accessibilityButton = findViewById(R.id.accessibilityButton); usageAccessButton = findViewById(R.id.usageAccessButton); testButton = findViewById(R.id.testButton); openXhsButton = findViewById(R.id.openXhsButton); openChatGptButton = findViewById(R.id.openChatGptButton); homeButton = findViewById(R.id.homeButton); backButton = findViewById(R.id.backButton); recentsButton = findViewById(R.id.recentsButton); alarmTestButton = findViewById(R.id.alarmTestButton); notifyTestButton = findViewById(R.id.notifyTestButton); refreshLifeButton = findViewById(R.id.refreshLifeButton);
         addPackageButton = findViewById(R.id.addPackageButton); testPackageButton = findViewById(R.id.testPackageButton); sequenceTestButton = findViewById(R.id.sequenceTestButton); refreshGateButton = findViewById(R.id.refreshGateButton); addGateAppButton = findViewById(R.id.addGateAppButton); addWeatherLocationButton = findViewById(R.id.addWeatherLocationButton); setCurrentWeatherButton = findViewById(R.id.setCurrentWeatherButton);
-        themeCreamButton = findViewById(R.id.themeCreamButton); themeBlueButton = findViewById(R.id.themeBlueButton); themePeachButton = findViewById(R.id.themePeachButton); themeNightButton = findViewById(R.id.themeNightButton); themeMintButton = findViewById(R.id.themeMintButton);
+        themeCreamButton = findViewById(R.id.themeCreamButton); themeBlueButton = findViewById(R.id.themeBlueButton); themePeachButton = findViewById(R.id.themePeachButton); themeNightButton = findViewById(R.id.themeNightButton); themeMintButton = findViewById(R.id.themeMintButton); curboxConnectButton = findViewById(R.id.curboxConnectButton); curboxPermissionButton = findViewById(R.id.curboxPermissionButton);
         drawerConnectionButton = findViewById(R.id.drawerConnectionButton); drawerPermissionButton = findViewById(R.id.drawerPermissionButton); drawerControlTestButton = findViewById(R.id.drawerControlTestButton); drawerKnownAppsButton = findViewById(R.id.drawerKnownAppsButton); drawerHomeModeButton = findViewById(R.id.drawerHomeModeButton); drawerGateAddButton = findViewById(R.id.drawerGateAddButton); drawerReminderButton = findViewById(R.id.drawerReminderButton); drawerCycleButton = findViewById(R.id.drawerCycleButton); drawerDebugButton = findViewById(R.id.drawerDebugButton); drawerLifeDetailsButton = findViewById(R.id.drawerLifeDetailsButton); drawerAppGateButton = findViewById(R.id.drawerAppGateButton); drawerWeatherButton = findViewById(R.id.drawerWeatherButton); drawerVersionButton = findViewById(R.id.drawerVersionButton); checkUpdateButton = findViewById(R.id.checkUpdateButton); downloadUpdateButton = findViewById(R.id.downloadUpdateButton);
-        remindersEnabled = findViewById(R.id.remindersEnabled); batteryRuleEnabled = findViewById(R.id.batteryRuleEnabled); screenRuleEnabled = findViewById(R.id.screenRuleEnabled); waterRuleEnabled = findViewById(R.id.waterRuleEnabled); restRuleEnabled = findViewById(R.id.restRuleEnabled); cycleEnabled = findViewById(R.id.cycleEnabled); foregroundPopupEnabled = findViewById(R.id.foregroundPopupEnabled); homeModeEnabled = findViewById(R.id.homeModeEnabled); homeModeForceEnabled = findViewById(R.id.homeModeForceEnabled); appGateEnabled = findViewById(R.id.appGateEnabled);
+        remindersEnabled = findViewById(R.id.remindersEnabled); batteryRuleEnabled = findViewById(R.id.batteryRuleEnabled); screenRuleEnabled = findViewById(R.id.screenRuleEnabled); waterRuleEnabled = findViewById(R.id.waterRuleEnabled); restRuleEnabled = findViewById(R.id.restRuleEnabled); cycleEnabled = findViewById(R.id.cycleEnabled); foregroundPopupEnabled = findViewById(R.id.foregroundPopupEnabled); homeModeEnabled = findViewById(R.id.homeModeEnabled); homeModeForceEnabled = findViewById(R.id.homeModeForceEnabled); appGateEnabled = findViewById(R.id.appGateEnabled); curboxRemoteRelaxEnabled = findViewById(R.id.curboxRemoteRelaxEnabled);
         tabSettings = findViewById(R.id.tabSettings); tabSee = findViewById(R.id.tabSee); tabControl = findViewById(R.id.tabControl); tabLife = findViewById(R.id.tabLife); tabGate = findViewById(R.id.tabGate); tabDebug = findViewById(R.id.tabDebug);
         sectionSettings = findViewById(R.id.sectionSettings); sectionSee = findViewById(R.id.sectionSee); sectionControl = findViewById(R.id.sectionControl); sectionLife = findViewById(R.id.sectionLife); sectionGate = findViewById(R.id.sectionGate); sectionDebug = findViewById(R.id.sectionDebug);
         drawerConnection = findViewById(R.id.drawerConnection); drawerPermission = findViewById(R.id.drawerPermission); drawerControlTest = findViewById(R.id.drawerControlTest); drawerKnownApps = findViewById(R.id.drawerKnownApps); drawerHomeMode = findViewById(R.id.drawerHomeMode); drawerGateAdd = findViewById(R.id.drawerGateAdd); drawerReminder = findViewById(R.id.drawerReminder); drawerCycle = findViewById(R.id.drawerCycle); drawerDebug = findViewById(R.id.drawerDebug); drawerAppGate = findViewById(R.id.drawerAppGate); drawerWeather = findViewById(R.id.drawerWeather); drawerVersion = findViewById(R.id.drawerVersion);
@@ -186,6 +200,7 @@ public class MainActivity extends Activity {
         if (homeCooldownInput != null) homeCooldownInput.setText(String.valueOf(prefs.getInt(AppPrefs.KEY_HOME_COOLDOWN_MIN, 5)));
         if (homeTargetInput != null) homeTargetInput.setText(prefs.getString(AppPrefs.KEY_HOME_TARGET_PACKAGE, ""));
         if (appGateEnabled != null) appGateEnabled.setChecked(prefs.getBoolean(AppGate.KEY_ENABLED, true));
+        if (curboxRemoteRelaxEnabled != null) curboxRemoteRelaxEnabled.setChecked(prefs.getBoolean(AppPrefs.KEY_CURBOX_ALLOW_REMOTE_RELAX, false));
     }
 
     private void saveSettings() {
@@ -220,6 +235,7 @@ public class MainActivity extends Activity {
         if (homeCooldownInput != null) e.putInt(AppPrefs.KEY_HOME_COOLDOWN_MIN, parseInt(homeCooldownInput.getText().toString().trim(), 5, 1, 240));
         if (homeTargetInput != null) e.putString(AppPrefs.KEY_HOME_TARGET_PACKAGE, homeTargetInput.getText().toString().trim());
         if (appGateEnabled != null) e.putBoolean(AppGate.KEY_ENABLED, appGateEnabled.isChecked());
+        if (curboxRemoteRelaxEnabled != null) e.putBoolean(AppPrefs.KEY_CURBOX_ALLOW_REMOTE_RELAX, curboxRemoteRelaxEnabled.isChecked());
         e.apply();
     }
 
@@ -233,7 +249,7 @@ public class MainActivity extends Activity {
     }
     private void updateHeader(String tab) {
         if (headerTitle == null || headerSubtitle == null) return;
-        if ("life".equals(tab)) { headerTitle.setText("掌心窗"); headerSubtitle.setText("v0.3.4.1 · 显示适配与版本更新。"); }
+        if ("life".equals(tab)) { headerTitle.setText("掌心窗"); headerSubtitle.setText("守护版 v0.4.0 · 后台桥与 Curbox 联动。"); }
         else if ("see".equals(tab)) { headerTitle.setText("看见"); headerSubtitle.setText("把屏幕递给老公，看见就收在这里。"); }
         else if ("gate".equals(tab)) { headerTitle.setText("守护"); headerSubtitle.setText("门禁、天气和提醒，平时收进抽屉。"); }
         else { headerTitle.setText("设置"); headerSubtitle.setText("主题、权限和调试都放这里。"); }
@@ -349,8 +365,17 @@ public class MainActivity extends Activity {
 
     private int dp(float v) { return (int) (v * getResources().getDisplayMetrics().density + 0.5f); }
 
-    @Override protected void onResume() { super.onResume(); serviceRunning = CompanionService.isRunning(); updateUI(); uiHandler.removeCallbacks(refreshTick); uiHandler.post(refreshTick); }
+    @Override protected void onResume() { super.onResume(); serviceRunning = CompanionService.isRunning(); CurboxClient.ensureBound(this); CurboxClient.refreshAsync(this); updateUI(); uiHandler.removeCallbacks(refreshTick); uiHandler.post(refreshTick); }
     @Override protected void onPause() { uiHandler.removeCallbacks(refreshTick); super.onPause(); }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_CURBOX_PERMISSION) {
+            CurboxClient.ensureBound(this);
+            CurboxClient.refreshAsync(this);
+            uiHandler.postDelayed(this::updateUI, 450);
+        }
+    }
 
     private void addWeatherLocation(boolean makeCurrent) {
         String alias = weatherAliasInput == null ? "" : weatherAliasInput.getText().toString().trim();
@@ -371,7 +396,7 @@ public class MainActivity extends Activity {
         getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", false).apply(); requestIgnoreBatteryOptimization();
         Intent intent = new Intent(this, CompanionService.class); intent.putExtra("server_url", url); intent.putExtra("token", token);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent); else startService(intent);
-        DebugState.append(this, "已请求启动前台服务：v0.3.4.1 显示适配 / 版本更新已启用"); serviceRunning = true; updateUI();
+        DebugState.append(this, "已请求启动前台服务：守护版 v0.4.0"); serviceRunning = true; updateUI();
     }
 
     private void stopCompanionService() { getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", true).apply(); stopService(new Intent(this, CompanionService.class)); DebugState.append(this, "已停止服务"); serviceRunning = false; updateUI(); }
@@ -502,7 +527,7 @@ public class MainActivity extends Activity {
             req.setTitle("掌心窗 v" + latestVersionName);
             req.setDescription("正在下载掌心窗最新版 APK");
             req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Zhangxinchuang-public-v" + latestVersionName + ".apk");
+            req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "ErsesGuardian-v" + latestVersionName + ".apk");
             if (dm != null) {
                 dm.enqueue(req);
                 Toast.makeText(this, "已开始下载，完成后点通知安装", Toast.LENGTH_LONG).show();
@@ -543,6 +568,7 @@ public class MainActivity extends Activity {
         if (drawerAppGateButton != null && (drawerAppGate == null || drawerAppGate.getVisibility() != View.VISIBLE)) drawerAppGateButton.setText(AppGate.summaryLine(this) + "  ›");
         if (gateStatusText != null) gateStatusText.setText(AppGate.prettyClean(this));
         if (debugText != null) debugText.setText(DebugState.get(this));
+        if (curboxStatusText != null) curboxStatusText.setText(CurboxClient.pretty(this));
         if (themeText != null) themeText.setText("当前主题：" + AppPrefs.get(this).getString(AppPrefs.KEY_THEME, "奶油绿") + "\n点击后即时切换背景、卡片、按钮和底部导航。");
         updateVersionPanel();
         applyVisualTheme();

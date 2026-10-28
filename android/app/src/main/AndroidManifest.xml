@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="dev.linjian.peek">
+    package="dev.linjian.peek"
+    android:versionCode="40000"
+    android:versionName="0.4.0">
 
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="34" />
 
@@ -38,10 +40,16 @@
         <intent>
             <action android:name="android.intent.action.SET_ALARM" />
         </intent>
+        <intent>
+            <action android:name="neth.iecal.curbox.api.BIND" />
+        </intent>
+        <intent>
+            <action android:name="neth.iecal.curbox.api.REQUEST_PERMISSION" />
+        </intent>
     </queries>
 
     <application
-        android:label="掌心窗"
+        android:label="掌心窗·守护版"
         android:icon="@drawable/ic_launcher"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false"
@@ -51,7 +59,7 @@
         android:resizeableActivity="true">
 
         <activity
-            android:name=".MainActivity"
+            android:name="dev.linjian.peek.MainActivity"
             android:exported="true"
             android:screenOrientation="portrait"
             android:resizeableActivity="true"
@@ -65,29 +73,29 @@
 
 
         <activity
-            android:name=".LockActivity"
+            android:name="dev.linjian.peek.LockActivity"
             android:exported="false"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Material.Light.NoActionBar" />
 
         <activity
-            android:name=".ReminderActivity"
+            android:name="dev.linjian.peek.ReminderActivity"
             android:exported="false"
             android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Material.Light.NoActionBar" />
 
         <service
-            android:name=".CompanionService"
+            android:name="dev.linjian.peek.CompanionService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
         <service
-            android:name=".ServiceWatchdogJob"
+            android:name="dev.linjian.peek.ServiceWatchdogJob"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <service
-            android:name=".ScreenshotService"
+            android:name="dev.linjian.peek.ScreenshotService"
             android:exported="false"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
@@ -99,7 +107,7 @@
         </service>
 
         <receiver
-            android:name=".BootReceiver"
+            android:name="dev.linjian.peek.BootReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter>

@@ -30,7 +30,7 @@
             android:id="@+id/headerSubtitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="v0.3.4.1-public · 显示适配与版本更新。"
+            android:text="守护版 v0.4.0 · 后台桥与 Curbox 联动。"
             android:textSize="11sp"
             android:textColor="#FF7E928C"
             android:layout_marginTop="4dp" />
@@ -349,7 +349,7 @@
                 <Button android:id="@+id/drawerVersionButton" android:layout_width="match_parent" android:layout_height="30dp" android:text="版本与更新  ›" android:textSize="11sp" android:background="@drawable/pill_soft" android:layout_marginBottom="8dp" />
                 <LinearLayout android:id="@+id/drawerVersion" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:background="@drawable/card_bg" android:visibility="gone" android:layout_marginBottom="8dp">
                     <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="版本与更新" android:textStyle="bold" android:textSize="15sp" android:textColor="#FF2D3E39" />
-                    <TextView android:id="@+id/versionStatusText" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="当前版本 v0.3.4.1" android:textSize="11sp" android:textColor="#FF596D66" android:layout_marginTop="6dp" android:lineSpacingExtra="3dp" />
+                    <TextView android:id="@+id/versionStatusText" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="当前版本 v0.4.0" android:textSize="11sp" android:textColor="#FF596D66" android:layout_marginTop="6dp" android:lineSpacingExtra="3dp" />
                     <TextView android:id="@+id/updateChangelogText" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="点击检查更新，可查看更新日志并下载最新版。" android:textSize="11sp" android:textColor="#FF7E928C" android:layout_marginTop="6dp" android:lineSpacingExtra="4dp" />
                     <Button android:id="@+id/checkUpdateButton" android:layout_width="match_parent" android:layout_height="30dp" android:text="检查更新" android:textSize="11sp" android:background="@drawable/pill_soft" android:layout_marginTop="8dp" />
                     <Button android:id="@+id/downloadUpdateButton" android:layout_width="match_parent" android:layout_height="30dp" android:text="下载最新版" android:textSize="11sp" android:background="@drawable/pill_soft" android:layout_marginTop="6dp" />
@@ -371,6 +371,10 @@
                     <Button android:id="@+id/accessibilityButton" android:layout_width="match_parent" android:layout_height="30dp" android:text="打开无障碍设置" android:textSize="11sp" android:background="@drawable/pill_soft" android:layout_marginTop="6dp" />
                     <Button android:id="@+id/usageAccessButton" android:layout_width="match_parent" android:layout_height="30dp" android:text="打开使用情况访问权限" android:textSize="11sp" android:background="@drawable/pill_soft" android:layout_marginTop="6dp" />
                     <Button android:id="@+id/toggleButton" android:layout_width="match_parent" android:layout_height="30dp" android:text="启动服务" android:textSize="11sp" android:textColor="#FFFFFFFF" android:background="@drawable/pill_primary" android:layout_marginTop="6dp" />
+                    <TextView android:id="@+id/curboxStatusText" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Curbox 状态加载中…" android:textSize="11sp" android:textColor="#FF596D66" android:layout_marginTop="10dp" android:lineSpacingExtra="3dp" />
+                    <Button android:id="@+id/curboxConnectButton" android:layout_width="match_parent" android:layout_height="30dp" android:text="连接 Curbox" android:textSize="11sp" android:background="@drawable/pill_soft" android:layout_marginTop="6dp" />
+                    <Button android:id="@+id/curboxPermissionButton" android:layout_width="match_parent" android:layout_height="30dp" android:text="授权掌心窗调用 Curbox" android:textSize="11sp" android:background="@drawable/pill_soft" android:layout_marginTop="6dp" />
+                    <CheckBox android:id="@+id/curboxRemoteRelaxEnabled" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="允许远程解除限制（默认关闭）" android:textSize="11sp" android:layout_marginTop="4dp" />
                 </LinearLayout>
 
                 <Button android:id="@+id/drawerKnownAppsButton" android:layout_width="match_parent" android:layout_height="30dp" android:text="应用包名管理  ›" android:textSize="11sp" android:background="@drawable/pill_soft" android:layout_marginBottom="8dp" />

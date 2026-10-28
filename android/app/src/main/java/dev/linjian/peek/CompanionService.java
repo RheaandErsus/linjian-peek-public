@@ -62,9 +62,10 @@ public class CompanionService extends Service {
             DebugState.append(this, "服务启动失败：服务器地址或 Token 为空");
             stopSelf(); return START_NOT_STICKY;
         }
-        DebugState.append(this, "掌心窗 v0.3.4.1 服务已启动，目标：" + serverUrl);
+        DebugState.append(this, "掌心窗·守护版 v0.4.0 服务已启动，目标：" + serverUrl);
         AppPrefs.get(this).edit().putBoolean(AppPrefs.KEY_USER_STOPPED, false).apply();
         ServiceWatchdogJob.schedulePeriodic(this);
+        CurboxClient.ensureBound(this);
         if (!running) { running = true; startPolling(); } else DebugState.append(this, "服务已在运行，继续轮询");
         return START_STICKY;
     }
@@ -164,6 +165,14 @@ public class CompanionService extends Service {
                 String result = rr.optString("result", rr.toString());
                 DebugState.append(ctx, "执行应用门禁命令 " + action + "：" + result);
                 try { reportCommand(ctx, serverUrl, token, id, ok, result); uploadState(serverUrl, token, ctx); } catch (Exception ignored) { }
+                return;
+            }
+            if (CurboxClient.isCurboxAction(action)) {
+                JSONObject rr = CurboxClient.handleCommand(ctx, cmd);
+                boolean ok = rr.optBoolean("ok", false);
+                String result = rr.opt("result") == null ? rr.toString() : String.valueOf(rr.opt("result"));
+                DebugState.append(ctx, "执行 Curbox 命令 " + action + "：" + result);
+                try { reportCommand(ctx, serverUrl, token, id, ok, rr.toString()); uploadState(serverUrl, token, ctx); } catch (Exception ignored) { }
                 return;
             }
             if ("run_sequence".equals(action)) {

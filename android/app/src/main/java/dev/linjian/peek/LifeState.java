@@ -61,7 +61,7 @@ public class LifeState {
             SharedPreferencesCompat prefs = new SharedPreferencesCompat(ctx);
 
             state.put("device_id", AppPrefs.device(ctx));
-            state.put("life_state_version", "0.3.4.1");
+            state.put("life_state_version", "0.4.0");
             state.put("local_time", formatLocal(now, "HH:mm"));
             state.put("local_date", formatLocal(now, "yyyy-MM-dd"));
             state.put("timezone", TimeZone.getDefault().getID());
@@ -87,6 +87,7 @@ public class LifeState {
             runtime.put("last_sync_age_seconds", lastSyncMs <= 0 ? -1 : Math.max(0L, (now - lastSyncMs) / 1000L));
             runtime.put("last_sync_error", AppPrefs.get(ctx).getString(AppPrefs.KEY_LAST_SYNC_ERROR, ""));
             state.put("service_runtime", runtime);
+            state.put("curbox", CurboxClient.snapshot(ctx));
             state.put("screen_time_today_minutes", usage.screenTimeMinutes);
             state.put("unlock_count_today", usage.unlockCount);
             state.put("last_unlock_at", usage.lastUnlockAt <= 0 ? "" : formatIsoLocal(usage.lastUnlockAt));
@@ -114,7 +115,7 @@ public class LifeState {
         try {
             JSONObject s = collect(ctx);
             StringBuilder sb = new StringBuilder();
-            sb.append("生活状态层 v0.3.4.1\n");
+            sb.append("生活状态层 v0.4.0\n");
             sb.append("时间：").append(s.optString("local_time", "-")).append("  ").append(s.optString("local_date", "-")).append("\n");
             sb.append("电量：").append(s.optInt("battery_percent", -1)).append("%  ").append(s.optBoolean("charging") ? "充电中" : "未充电").append("\n");
             sb.append("网络：").append(s.optString("network_type", "-")).append("  屏幕：").append(s.optBoolean("screen_on") ? "亮" : "灭").append("\n");
