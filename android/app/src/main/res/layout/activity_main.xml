@@ -4,7 +4,8 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@drawable/app_bg">
+    android:background="@drawable/app_bg"
+    android:clipToPadding="false">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -43,6 +44,8 @@
             android:textColor="#FF60746F"
             android:background="@drawable/card_bg"
             android:layout_marginTop="6dp"
+            android:maxLines="2"
+            android:ellipsize="end"
             android:lineSpacingExtra="3dp" />
     </LinearLayout>
 
@@ -57,7 +60,8 @@
         <ScrollView
             android:id="@+id/sectionLife"
             android:layout_width="match_parent"
-            android:layout_height="match_parent">
+            android:layout_height="match_parent"
+            android:fillViewport="true">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -108,7 +112,8 @@
 
                     <LinearLayout
                         android:layout_width="0dp"
-                        android:layout_height="88dp"
+                        android:layout_height="wrap_content"
+                        android:minHeight="88dp"
                         android:layout_weight="1"
                         android:orientation="vertical"
                         android:background="@drawable/card_bg"
@@ -120,7 +125,8 @@
 
                     <LinearLayout
                         android:layout_width="0dp"
-                        android:layout_height="88dp"
+                        android:layout_height="wrap_content"
+                        android:minHeight="88dp"
                         android:layout_weight="1"
                         android:orientation="vertical"
                         android:background="@drawable/card_bg"
@@ -139,7 +145,8 @@
 
                     <LinearLayout
                         android:layout_width="0dp"
-                        android:layout_height="88dp"
+                        android:layout_height="wrap_content"
+                        android:minHeight="88dp"
                         android:layout_weight="1"
                         android:orientation="vertical"
                         android:background="@drawable/card_bg"
@@ -151,7 +158,8 @@
 
                     <LinearLayout
                         android:layout_width="0dp"
-                        android:layout_height="88dp"
+                        android:layout_height="wrap_content"
+                        android:minHeight="88dp"
                         android:layout_weight="1"
                         android:orientation="vertical"
                         android:background="@drawable/card_bg"
@@ -182,6 +190,7 @@
             android:id="@+id/sectionSee"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:fillViewport="true"
             android:visibility="gone">
 
             <LinearLayout
@@ -239,6 +248,7 @@
             android:id="@+id/sectionGate"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:fillViewport="true"
             android:visibility="gone">
 
             <LinearLayout
@@ -316,6 +326,7 @@
             android:id="@+id/sectionSettings"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:fillViewport="true"
             android:visibility="gone">
 
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingBottom="18dp">
@@ -397,20 +408,21 @@
     </FrameLayout>
 
     <LinearLayout
+        android:id="@+id/bottomBar"
         android:layout_width="match_parent"
-        android:layout_height="44dp"
+        android:layout_height="52dp"
         android:orientation="horizontal"
         android:gravity="center"
-        android:paddingLeft="16dp"
-        android:paddingRight="16dp"
-        android:paddingTop="5dp"
-        android:paddingBottom="5dp"
+        android:paddingLeft="10dp"
+        android:paddingRight="10dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
         android:background="@drawable/bottom_bar_bg">
 
         <Button android:id="@+id/tabLife" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="总览" android:textSize="11sp" android:background="@drawable/pill_primary" android:textColor="#FFFFFFFF" />
-        <Button android:id="@+id/tabSee" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="看见" android:textSize="11sp" android:layout_marginLeft="7dp" android:background="@drawable/pill_soft" />
-        <Button android:id="@+id/tabGate" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="守护" android:textSize="11sp" android:layout_marginLeft="7dp" android:background="@drawable/pill_soft" />
-        <Button android:id="@+id/tabSettings" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="设置" android:textSize="11sp" android:layout_marginLeft="7dp" android:background="@drawable/pill_soft" />
+        <Button android:id="@+id/tabSee" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="看见" android:textSize="11sp" android:layout_marginLeft="4dp" android:background="@drawable/pill_soft" />
+        <Button android:id="@+id/tabGate" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="守护" android:textSize="11sp" android:layout_marginLeft="4dp" android:background="@drawable/pill_soft" />
+        <Button android:id="@+id/tabSettings" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:text="设置" android:textSize="11sp" android:layout_marginLeft="4dp" android:background="@drawable/pill_soft" />
         <Button android:id="@+id/tabControl" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
         <Button android:id="@+id/tabDebug" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
     </LinearLayout>
