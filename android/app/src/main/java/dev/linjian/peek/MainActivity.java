@@ -78,7 +78,6 @@ public class MainActivity extends Activity {
         prepareWindowForFullContent();
         setContentView(R.layout.activity_main);
         bindViews();
-        repairFirstLayoutPass();
         loadSettings();
 
         DebugState.append(this, "掌心窗 v0.3.4.1-public 显示适配版已打开");
@@ -405,37 +404,6 @@ public class MainActivity extends Activity {
                 getWindow().setNavigationBarColor(0xFFFFFFFF);
             }
         } catch (Exception ignored) { }
-    }
-
-    private void repairFirstLayoutPass() {
-        final View content = findViewById(android.R.id.content);
-        if (content == null) return;
-        Runnable repair = () -> {
-            try {
-                View root = ((ViewGroup) content).getChildAt(0);
-                int w = getResources().getDisplayMetrics().widthPixels;
-                int h = getResources().getDisplayMetrics().heightPixels;
-                if (root != null) {
-                    root.setMinimumWidth(w);
-                    root.setMinimumHeight(h);
-                    ViewGroup.LayoutParams lp = root.getLayoutParams();
-                    if (lp != null) { lp.width = ViewGroup.LayoutParams.MATCH_PARENT; lp.height = ViewGroup.LayoutParams.MATCH_PARENT; root.setLayoutParams(lp); }
-                    root.requestLayout();
-                    root.invalidate();
-                }
-                content.requestLayout();
-                content.invalidate();
-            } catch (Exception ignored) { }
-        };
-        content.post(repair);
-        uiHandler.postDelayed(repair, 120);
-        uiHandler.postDelayed(repair, 360);
-        uiHandler.postDelayed(repair, 900);
-    }
-
-    @Override public void onWindowFocusChanged(boolean hasFocus) {
-        super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) repairFirstLayoutPass();
     }
 
     private void bindVersionDrawer() {
