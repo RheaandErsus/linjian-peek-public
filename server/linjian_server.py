@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, urlparse
 DEFAULT_PORT = 8513
 DEFAULT_KEEP = 3
 MAX_UPLOAD_BYTES = 24 * 1024 * 1024
-VERSION = "0.3.5.1-public-health-bridge"
+VERSION = "0.4.0-guardian-bridge"
 DEFAULT_DEVICE = os.environ.get("LINJIAN_DEFAULT_DEVICE", "android-phone")
 
 ERR_BAD_TOKEN = "LINJIAN_ERR_BAD_TOKEN"
@@ -45,7 +45,7 @@ KNOWN_APPS = {
     "Speedcat": "", "speedcat": "",
 }
 SENSITIVE_PACKAGES = {"com.eg.android.AlipayGphone", "com.tencent.mm.plugin.wallet"}
-ALLOWED_ACTIONS = {"noop", "peek", "open_app", "home", "back", "recents", "tap", "swipe", "set_alarm", "send_notification", "run_sequence", "save_known_app", "get_screen_nodes", "tap_text", "input_text", "lock_app", "unlock_app", "temporary_unlock_app", "extend_lock", "deny_unlock_request", "get_lock_state", "set_emergency_passphrase", "add_locked_app", "remove_locked_app", "list_lockable_apps", "get_guidian_state", "set_guidian_config", "trigger_guidian", "mark_guidian_returned"}
+ALLOWED_ACTIONS = {"noop", "peek", "open_app", "home", "back", "recents", "tap", "swipe", "set_alarm", "send_notification", "run_sequence", "save_known_app", "get_screen_nodes", "tap_text", "input_text", "lock_app", "unlock_app", "temporary_unlock_app", "extend_lock", "deny_unlock_request", "get_lock_state", "set_emergency_passphrase", "add_locked_app", "remove_locked_app", "list_lockable_apps", "get_guidian_state", "set_guidian_config", "trigger_guidian", "mark_guidian_returned", "curbox_status", "curbox_query", "curbox_list", "curbox_start_focus", "curbox_set_app_group", "curbox_set_keyword_group", "curbox_set_grayscale_group", "curbox_set_keyword_blocker", "curbox_set_reel_blocker", "curbox_set_reel_counter", "curbox_set_dnd"}
 
 
 def load_dotenv(path: Path) -> None:

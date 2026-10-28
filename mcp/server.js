@@ -111,7 +111,7 @@ async function fetchLatestImage() {
 }
 
 function makeServer() {
-  const server = new McpServer({ name: "掌心窗", version: "0.3.5.1-public-health-bridge" });
+  const server = new McpServer({ name: "掌心窗·守护版", version: "0.4.0-guardian-bridge" });
 
   server.tool(
     "peek_screen",
@@ -243,6 +243,63 @@ function makeServer() {
     const res = await linjianFetch(`/api/life_state?device_id=${encodeURIComponent(device_id)}`);
     const data = await res.json();
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  });
+
+  server.tool("get_curbox_status", "读取 Curbox 连接、授权、专注和全局拦截状态。只读，不改变手机设置。", {
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(3).max(20).default(8)
+  }, async ({ device_id = DEFAULT_DEVICE, wait_seconds = 8 }) => {
+    const result = await postCommand({ action: "curbox_status", device_id });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return { content: [{ type: "text", text: JSON.stringify({ queued: result, observed_status: observed?.command || null }, null, 2) }] };
+  });
+
+  server.tool("query_curbox_usage", "读取 Curbox 记录的今日屏幕时间、短视频数量或当前专注状态。只读。", {
+    state: z.enum(["SCREENTIME_TODAY", "REELS_TODAY", "FOCUS_ACTIVE"]),
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(3).max(20).default(8)
+  }, async ({ state, device_id = DEFAULT_DEVICE, wait_seconds = 8 }) => {
+    const result = await postCommand({ action: "curbox_query", state, device_id, payload: { state } });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return { content: [{ type: "text", text: JSON.stringify({ queued: result, observed_status: observed?.command || null }, null, 2) }] };
+  });
+
+  server.tool("list_curbox_groups", "列出 Curbox 里已经由用户配置好的专注、应用拦截、关键词或灰度组。返回的 id 才能用于开启守护。", {
+    kind: z.enum(["FOCUS_GROUPS", "APP_BLOCKER_GROUPS", "KEYWORD_GROUPS", "GRAYSCALE_GROUPS", "AUTO_DND_GROUPS", "UI_HIDER_SCRIPTS"]),
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(3).max(20).default(8)
+  }, async ({ kind, device_id = DEFAULT_DEVICE, wait_seconds = 8 }) => {
+    const result = await postCommand({ action: "curbox_list", kind, device_id, payload: { kind } });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return { content: [{ type: "text", text: JSON.stringify({ queued: result, observed_status: observed?.command || null }, null, 2) }] };
+  });
+
+  server.tool("start_curbox_focus", "用 Curbox 已配置的专注组开始一次专注。若该组不可提前退出，掌心窗也不能绕过。", {
+    target: z.string().describe("先用 list_curbox_groups 取得的专注组 id"),
+    minutes: z.number().int().min(1).max(240).default(25),
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(3).max(20).default(8)
+  }, async ({ target, minutes = 25, device_id = DEFAULT_DEVICE, wait_seconds = 8 }) => {
+    const result = await postCommand({ action: "curbox_start_focus", target, minutes, device_id, payload: { target, minutes } });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return { content: [{ type: "text", text: JSON.stringify({ queued: result, observed_status: observed?.command || null }, null, 2) }] };
+  });
+
+  server.tool("set_curbox_guard", "开启或关闭一个 Curbox 守护项。默认手机端只允许远程加严；enable=false 会在用户没有本地开启授权时被拒绝。", {
+    guard: z.enum(["app_group", "keyword_group", "grayscale_group", "keyword_blocker", "reel_blocker", "reel_counter", "dnd"]),
+    target: z.string().default("").describe("组类型必须填写对应组 id；全局开关留空"),
+    enable: z.boolean().default(true),
+    device_id: z.string().default(DEFAULT_DEVICE), wait_seconds: z.number().int().min(3).max(20).default(8)
+  }, async ({ guard, target = "", enable = true, device_id = DEFAULT_DEVICE, wait_seconds = 8 }) => {
+    const actions = {
+      app_group: "curbox_set_app_group", keyword_group: "curbox_set_keyword_group", grayscale_group: "curbox_set_grayscale_group",
+      keyword_blocker: "curbox_set_keyword_blocker", reel_blocker: "curbox_set_reel_blocker", reel_counter: "curbox_set_reel_counter", dnd: "curbox_set_dnd"
+    };
+    const action = actions[guard];
+    const result = await postCommand({ action, target, enable, device_id, payload: { target, enable } });
+    const id = result?.command?.id;
+    const observed = id ? await waitCommand(id, wait_seconds) : null;
+    return { content: [{ type: "text", text: JSON.stringify({ queued: result, observed_status: observed?.command || null, safety_note: enable ? "已请求加严限制。" : "仅当手机端明确允许远程解除限制时才会执行。" }, null, 2) }] };
   });
 
   server.tool(
