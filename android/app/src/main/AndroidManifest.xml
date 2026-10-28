@@ -18,6 +18,7 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
@@ -81,6 +82,11 @@
             android:foregroundServiceType="dataSync" />
 
         <service
+            android:name=".ServiceWatchdogJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <service
             android:name=".ScreenshotService"
             android:exported="false"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
@@ -91,6 +97,17 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_config" />
         </service>
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 </manifest>

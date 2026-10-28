@@ -35,6 +35,10 @@ public class AppPrefs {
     public static final String KEY_CYCLE_REMIND_BEFORE = "cycle_remind_before_days";
     public static final String KEY_USER_NICKNAME = "user_nickname";
     public static final String KEY_PARTNER_NICKNAME = "partner_nickname";
+    public static final String KEY_USER_STOPPED = "user_stopped";
+    public static final String KEY_SERVICE_HEARTBEAT_MS = "service_heartbeat_ms";
+    public static final String KEY_LAST_SYNC_MS = "last_sync_ms";
+    public static final String KEY_LAST_SYNC_ERROR = "last_sync_error";
 
     public static final String KEY_FOREGROUND_POPUP = "foreground_popup_enabled";
     public static final String KEY_CUSTOM_APPS = "custom_apps_lines";
@@ -49,6 +53,10 @@ public class AppPrefs {
     public static String server(Context ctx) { return get(ctx).getString(KEY_SERVER, ""); }
     public static String token(Context ctx) { return get(ctx).getString(KEY_TOKEN, ""); }
     public static String device(Context ctx) { return get(ctx).getString(KEY_DEVICE, "android-phone"); }
+    public static boolean userStopped(Context ctx) { return get(ctx).getBoolean(KEY_USER_STOPPED, true); }
+    public static boolean hasConnectionConfig(Context ctx) {
+        return !server(ctx).trim().isEmpty() && !token(ctx).trim().isEmpty();
+    }
     public static String userName(Context ctx) {
         String v = get(ctx).getString(KEY_USER_NICKNAME, "宝宝");
         return (v == null || v.trim().isEmpty()) ? "宝宝" : v.trim();

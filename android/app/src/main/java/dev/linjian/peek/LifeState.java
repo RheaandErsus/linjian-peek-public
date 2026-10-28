@@ -76,6 +76,17 @@ public class LifeState {
             state.put("current_app", currentApp);
             state.put("accessibility_ready", ScreenshotService.ready());
             state.put("usage_permission_ready", usageReady);
+            JSONObject runtime = new JSONObject();
+            long heartbeatMs = AppPrefs.get(ctx).getLong(AppPrefs.KEY_SERVICE_HEARTBEAT_MS, 0L);
+            long lastSyncMs = AppPrefs.get(ctx).getLong(AppPrefs.KEY_LAST_SYNC_MS, 0L);
+            runtime.put("companion_running", CompanionService.isRunning());
+            runtime.put("user_stopped", AppPrefs.userStopped(ctx));
+            runtime.put("heartbeat_at_ms", heartbeatMs);
+            runtime.put("heartbeat_age_seconds", heartbeatMs <= 0 ? -1 : Math.max(0L, (now - heartbeatMs) / 1000L));
+            runtime.put("last_sync_at_ms", lastSyncMs);
+            runtime.put("last_sync_age_seconds", lastSyncMs <= 0 ? -1 : Math.max(0L, (now - lastSyncMs) / 1000L));
+            runtime.put("last_sync_error", AppPrefs.get(ctx).getString(AppPrefs.KEY_LAST_SYNC_ERROR, ""));
+            state.put("service_runtime", runtime);
             state.put("screen_time_today_minutes", usage.screenTimeMinutes);
             state.put("unlock_count_today", usage.unlockCount);
             state.put("last_unlock_at", usage.lastUnlockAt <= 0 ? "" : formatIsoLocal(usage.lastUnlockAt));

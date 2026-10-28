@@ -37,8 +37,6 @@ public class ScreenshotService extends AccessibilityService {
     private static volatile String screenNodesJson = "[]";
     private final Executor executor = Executors.newSingleThreadExecutor();
     private Handler watchdog;
-    private HandlerThread backgroundPollThread;
-    private Handler backgroundPollHandler;
 
     public static ScreenshotService getInstance() { return instance; }
     public static boolean ready() { return instance != null; }
@@ -49,39 +47,11 @@ public class ScreenshotService extends AccessibilityService {
     private final Runnable watchdogTick = new Runnable() {
         @Override public void run() {
             try {
-                SharedPreferences prefs = getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE);
-                String url = prefs.getString(AppPrefs.KEY_SERVER, "");
-                String tk = prefs.getString(AppPrefs.KEY_TOKEN, "");
-                boolean userStopped = prefs.getBoolean("user_stopped", false);
-                if (!CompanionService.isRunning() && !userStopped && !url.isEmpty() && !tk.isEmpty()) {
-                    DebugState.append(ScreenshotService.this, "看门狗：尝试重启前台服务");
-                    Intent i = new Intent(ScreenshotService.this, CompanionService.class);
-                    i.putExtra("server_url", url);
-                    i.putExtra("token", tk);
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(i); else startService(i);
-                }
+                if (!CompanionService.isRunning()) ServiceWatchdogJob.ensureRunning(ScreenshotService.this, "accessibility");
             } catch (Exception e) {
                 DebugState.append(ScreenshotService.this, "看门狗异常：" + shortMsg(e));
             }
             if (watchdog != null) watchdog.postDelayed(this, 60000);
-        }
-    };
-
-    private final Runnable backgroundPollTick = new Runnable() {
-        @Override public void run() {
-            try {
-                SharedPreferences prefs = getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE);
-                String url = normalizeUrl(prefs.getString(AppPrefs.KEY_SERVER, ""));
-                String tk = prefs.getString(AppPrefs.KEY_TOKEN, "");
-                boolean userStopped = prefs.getBoolean("user_stopped", true);
-                if (!userStopped && !url.isEmpty() && !tk.isEmpty()) {
-                    String body = pollServerFromAccessibility(url, tk);
-                    if (body != null && body.length() > 0) CompanionService.handleCommandBody(ScreenshotService.this, body, url, tk);
-                }
-            } catch (Exception e) {
-                DebugState.append(ScreenshotService.this, "无障碍后台轮询异常：" + shortMsg(e));
-            }
-            if (backgroundPollHandler != null) backgroundPollHandler.postDelayed(this, Math.max(700, AppPrefs.interval(ScreenshotService.this)));
         }
     };
 
@@ -91,7 +61,7 @@ public class ScreenshotService extends AccessibilityService {
         DebugState.append(this, "无障碍服务已连接：截图/读屏/节点坐标/应用门禁可用 v0.3.4.1");
         watchdog = new Handler(Looper.getMainLooper());
         watchdog.postDelayed(watchdogTick, 15000);
-        startBackgroundPolling();
+        ServiceWatchdogJob.schedulePeriodic(this);
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
@@ -108,38 +78,8 @@ public class ScreenshotService extends AccessibilityService {
         DebugState.append(this, "无障碍服务已断开");
         instance = null;
         if (watchdog != null) { watchdog.removeCallbacksAndMessages(null); watchdog = null; }
-        if (backgroundPollHandler != null) { backgroundPollHandler.removeCallbacksAndMessages(null); backgroundPollHandler = null; }
-        if (backgroundPollThread != null) { backgroundPollThread.quitSafely(); backgroundPollThread = null; }
+        if (!AppPrefs.userStopped(this)) ServiceWatchdogJob.scheduleSoon(this, 5_000L);
         super.onDestroy();
-    }
-
-    private void startBackgroundPolling() {
-        if (backgroundPollThread != null) return;
-        backgroundPollThread = new HandlerThread("LinjianAccessibilityPoll");
-        backgroundPollThread.start();
-        backgroundPollHandler = new Handler(backgroundPollThread.getLooper());
-        DebugState.append(this, "无障碍后台轮询已启动 v0.3.4.1");
-        backgroundPollHandler.postDelayed(backgroundPollTick, 1000);
-    }
-
-    private String pollServerFromAccessibility(String serverUrl, String token) throws Exception {
-        HttpURLConnection conn = (HttpURLConnection) new URL(serverUrl + "/api/poll?device_id=" + java.net.URLEncoder.encode(AppPrefs.device(this), "UTF-8")).openConnection();
-        conn.setConnectTimeout(10000);
-        conn.setReadTimeout(15000);
-        conn.setRequestMethod("GET");
-        conn.setRequestProperty("X-Auth-Token", token);
-        try {
-            int code = conn.getResponseCode();
-            String body = readBody(conn, code);
-            if (code == 200) {
-                if (body.contains("\"command\": null") || body.contains("\"command\":null")) return "";
-                DebugState.append(this, "无障碍后台轮询：收到命令包");
-                return body;
-            } else {
-                DebugState.append(this, "无障碍后台轮询失败：HTTP " + code + " " + clip(body));
-            }
-            return "";
-        } finally { conn.disconnect(); }
     }
 
     public void refreshScreenModel() { updateScreenText(); }
