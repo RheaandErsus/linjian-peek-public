@@ -11,7 +11,7 @@ SRC=$PROJECT/app/src/main
 OUT=$PROJECT/build
 PKG_PATH=dev/linjian/peek
 APP_ID=${APP_ID:-dev.rhea.erses.guardian}
-APP_VERSION=${APP_VERSION:-0.4.0}
+APP_VERSION=${APP_VERSION:-0.4.1}
 
 if [ ! -f "$PLATFORM" ]; then
   echo "Android platform not found: $PLATFORM"
@@ -62,23 +62,14 @@ mv app.tmp.apk app.unsigned.apk
 
 KEYSTORE=$OUT/signing.jks
 KEY_ALIAS=${ANDROID_KEY_ALIAS:-erses-guardian}
-STORE_PASSWORD=${ANDROID_STORE_PASSWORD:-erses-guardian-debug}
+STORE_PASSWORD=${ANDROID_STORE_PASSWORD:?Stable signing password is required}
 KEY_PASSWORD=${ANDROID_KEY_PASSWORD:-$STORE_PASSWORD}
 
-if [ -n "${ANDROID_KEYSTORE_B64:-}" ]; then
-    echo "=== Loading stable release signing key ==="
-    printf '%s' "$ANDROID_KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
-else
-    echo "=== Generating ephemeral DEBUG signing key ==="
-    keytool -genkeypair -v \
-        -keystore "$KEYSTORE" \
-        -keyalg RSA -keysize 2048 \
-        -validity 10000 \
-        -alias "$KEY_ALIAS" \
-        -storepass "$STORE_PASSWORD" \
-        -keypass "$KEY_PASSWORD" \
-        -dname "CN=Erses Guardian Debug"
+if [ -z "${ANDROID_KEYSTORE_B64:-}" ]; then
+    echo "Stable guardian signing key is required. Refusing to create a replacement key."
+    exit 1
 fi
+printf '%s' "$ANDROID_KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
 
 echo "=== Aligning ==="
 $BUILD_TOOLS/zipalign -f 4 app.unsigned.apk app.aligned.apk

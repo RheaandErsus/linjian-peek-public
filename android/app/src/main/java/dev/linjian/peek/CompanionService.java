@@ -11,6 +11,14 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkRequest;
+import android.os.SystemClock;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -39,69 +47,119 @@ public class CompanionService extends Service {
     private Handler pollHandler;
     private HandlerThread pollThread;
     private int consecutiveFailures = 0;
+    private volatile boolean active;
+    private static volatile long loopElapsed;
+    private long lastUploadElapsed;
+    private long lastHeartbeatElapsed;
+    private final AtomicBoolean commandBusy = new AtomicBoolean();
+    private final ThreadPoolExecutor commands = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS, new SynchronousQueue<>());
+    private ConnectivityManager connectivity;
+    private ConnectivityManager.NetworkCallback networkCallback;
+    private final Runnable pollTask = this::pollLoop;
+    public static boolean loopFresh() { return running && ReliabilityPolicy.fresh(loopElapsed, SystemClock.elapsedRealtime(), 120000L); }
+
+    private void wakePolling() {
+        Handler handler = pollHandler;
+        if (handler != null && active) handler.post(() -> {
+            handler.removeCallbacks(pollTask);
+            if (active) handler.post(pollTask);
+        });
+    }
 
     public static boolean isRunning() { return running; }
+    private static final class HttpFailure extends java.io.IOException {
+        final int status;
+        HttpFailure(int status) { super("HTTP " + status); this.status = status; }
+    }
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && "STOP".equals(intent.getAction())) {
-            AppPrefs.get(this).edit().putBoolean(AppPrefs.KEY_USER_STOPPED, true).apply();
+            AppPrefs.get(this).edit().putBoolean(AppPrefs.KEY_USER_STOPPED, true).commit();
+            ServiceWatchdogJob.cancel(this);
+            stopSelf(); return START_NOT_STICKY;
+        }
+        if (AppPrefs.userStopped(this) || !AppPrefs.hasConnectionConfig(this)) {
             stopSelf(); return START_NOT_STICKY;
         }
         createNotificationChannel();
-        startForeground(NOTIFICATION_ID, buildNotification("已启动，等待掌心窗命令"));
-        if (intent != null) {
-            serverUrl = ScreenshotService.normalizeUrl(intent.getStringExtra("server_url"));
-            token = intent.getStringExtra("token");
+        startForeground(NOTIFICATION_ID, buildNotification("远程桥运行中；截图、手势与 Curbox 状态独立检查"));
+        serverUrl = ScreenshotService.normalizeUrl(AppPrefs.server(this));
+        token = AppPrefs.token(this);
+        if (!active) {
+            active = true; running = true;
+            ServiceWatchdogJob.schedulePeriodic(this);
+            CurboxClient.resume(this);
+            startPolling();
+            connectivity = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            networkCallback = new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) { wakePolling(); }
+            };
+            try {
+                if (Build.VERSION.SDK_INT >= 24) connectivity.registerDefaultNetworkCallback(networkCallback);
+                else connectivity.registerNetworkCallback(new NetworkRequest.Builder().build(), networkCallback);
+            } catch (RuntimeException e) { networkCallback = null; }
+            DebugState.append(this, "守护版 v0.4.1 远程桥已启动，不要求无障碍开启");
         }
-        if (serverUrl == null || token == null) {
-            serverUrl = ScreenshotService.normalizeUrl(AppPrefs.server(this));
-            token = AppPrefs.token(this);
-        }
-        if (serverUrl == null || token == null || serverUrl.isEmpty() || token.isEmpty()) {
-            DebugState.append(this, "服务启动失败：服务器地址或 Token 为空");
-            stopSelf(); return START_NOT_STICKY;
-        }
-        DebugState.append(this, "掌心窗·守护版 v0.4.0 服务已启动，目标：" + serverUrl);
-        AppPrefs.get(this).edit().putBoolean(AppPrefs.KEY_USER_STOPPED, false).apply();
-        ServiceWatchdogJob.schedulePeriodic(this);
-        CurboxClient.ensureBound(this);
-        if (!running) { running = true; startPolling(); } else DebugState.append(this, "服务已在运行，继续轮询");
         return START_STICKY;
     }
 
     private void startPolling() {
+        loopElapsed = SystemClock.elapsedRealtime();
+        AppPrefs.get(this).edit().putLong(AppPrefs.KEY_SERVICE_HEARTBEAT_MS, System.currentTimeMillis()).apply();
         pollThread = new HandlerThread("LinjianUnifiedPoll");
         pollThread.start();
         pollHandler = new Handler(pollThread.getLooper());
         DebugState.append(this, "前台轮询线程已启动");
-        pollHandler.post(this::pollLoop);
+        pollHandler.post(pollTask);
     }
 
     private void pollLoop() {
-        if (!running) return;
+        if (!active || AppPrefs.userStopped(this)) return;
+        loopElapsed = SystemClock.elapsedRealtime();
+        CurboxClient.ensureBound(this);
+        CurboxClient.refreshAsync(this);
         boolean success = false;
-        long now = System.currentTimeMillis();
-        AppPrefs.get(this).edit().putLong(AppPrefs.KEY_SERVICE_HEARTBEAT_MS, now).apply();
         try {
-            uploadState(serverUrl, token, this);
-            String body = pollServer();
-            if (body != null && body.length() > 0) handleCommandBody(this, body, serverUrl, token);
-            success = true;
-            consecutiveFailures = 0;
-            AppPrefs.get(this).edit()
-                    .putLong(AppPrefs.KEY_LAST_SYNC_MS, System.currentTimeMillis())
-                    .putString(AppPrefs.KEY_LAST_SYNC_ERROR, "")
-                    .apply();
+            if (connectivity != null && (connectivity.getActiveNetworkInfo() == null || !connectivity.getActiveNetworkInfo().isConnected())) {
+                throw new java.io.IOException("network_unavailable");
+            }
+            if (!commandBusy.get()) {
+                String body = pollServer();
+                AppPrefs.get(this).edit().putLong("last_poll_success_ms", System.currentTimeMillis()).apply();
+                if (body != null && !body.isEmpty() && commandBusy.compareAndSet(false, true)) {
+                    try {
+                        commands.execute(() -> {
+                            try { if (active && !AppPrefs.userStopped(this)) handleCommandBody(this, body, serverUrl, token); }
+                            finally { commandBusy.set(false); }
+                        });
+                    } catch (java.util.concurrent.RejectedExecutionException busy) { commandBusy.set(false); }
+                }
+            }
+            if (lastUploadElapsed == 0 || SystemClock.elapsedRealtime() - lastUploadElapsed >= 30000L) {
+                uploadState(serverUrl, token, this);
+                lastUploadElapsed = SystemClock.elapsedRealtime();
+            }
+            success = true; consecutiveFailures = 0;
+            AppPrefs.get(this).edit().putString(AppPrefs.KEY_LAST_SYNC_ERROR, "").apply();
         } catch (Exception e) {
-            consecutiveFailures++;
-            String message = ScreenshotService.shortMsg(e);
+            consecutiveFailures = Math.min(10, consecutiveFailures + 1);
+            String message;
+            if (e instanceof HttpFailure) {
+                int status = ((HttpFailure) e).status;
+                message = status == 401 || status == 403 ? "鉴权失败：HTTP " + status + "，请核对已保存的 Token" : "后台请求失败：HTTP " + status;
+            } else message = e instanceof java.io.IOException ? "网络不可用或请求超时" : "同步失败：" + e.getClass().getSimpleName();
             AppPrefs.get(this).edit().putString(AppPrefs.KEY_LAST_SYNC_ERROR, message).apply();
-            DebugState.append(this, "轮询异常（第 " + consecutiveFailures + " 次）：" + message);
+            if (consecutiveFailures == 1 || consecutiveFailures % 5 == 0) DebugState.append(this, message + "，正在退避重连");
         }
-        long base = Math.max(1_500L, AppPrefs.interval(this));
-        long delay = success ? base : Math.min(60_000L, base * (1L << Math.min(5, consecutiveFailures)));
-        if (running) pollHandler.postDelayed(this::pollLoop, delay);
+        if (SystemClock.elapsedRealtime() - lastHeartbeatElapsed >= 30000L) {
+            lastHeartbeatElapsed = SystemClock.elapsedRealtime();
+            AppPrefs.get(this).edit().putLong(AppPrefs.KEY_SERVICE_HEARTBEAT_MS, System.currentTimeMillis())
+                    .apply();
+        }
+        long base = Math.max(1500L, AppPrefs.interval(this));
+        long delay = success ? base : ReliabilityPolicy.retryDelay(base, consecutiveFailures, Math.random());
+        if (active) { pollHandler.removeCallbacks(pollTask); pollHandler.postDelayed(pollTask, delay); }
     }
 
     private String pollServer() throws Exception {
@@ -110,10 +168,12 @@ public class CompanionService extends Service {
         try {
             int code = conn.getResponseCode(); String body = ScreenshotService.readBody(conn, code);
             if (code == 200) {
-                if (body.contains("\"command\": null") || body.contains("\"command\":null")) return "";
+                JSONObject envelope = new JSONObject(body);
+                if (!envelope.has("command")) throw new java.io.IOException("invalid_poll_response");
+                if (envelope.isNull("command")) return "";
                 DebugState.append(this, "轮询成功：收到命令包"); return body;
-            } else DebugState.append(this, "轮询失败：HTTP " + code + " " + ScreenshotService.clip(body));
-            return "";
+            }
+            throw new HttpFailure(code);
         } finally { conn.disconnect(); }
     }
 
@@ -130,6 +190,11 @@ public class CompanionService extends Service {
             JSONObject cmd = (JSONObject) raw;
             String id = cmd.optString("id", "");
             String action = cmd.optString("action", "noop");
+            if (AppPrefs.userStopped(ctx)) return;
+            if (!ReliabilityPolicy.readOnlyCommand(action) && !claimCommand(ctx, id)) {
+                try { reportCommand(ctx, serverUrl, token, id, false, "duplicate_or_unconfirmed_command_not_replayed"); } catch (Exception ignored) { }
+                return;
+            }
             String app = cmd.optString("app", "");
             String pkg = cmd.optString("package", "");
             float x = (float) cmd.optDouble("x", 0);
@@ -183,6 +248,25 @@ public class CompanionService extends Service {
         } catch (Exception e) { DebugState.append(ctx, "命令解析异常：" + ScreenshotService.shortMsg(e)); }
     }
 
+    private static synchronized boolean claimCommand(Context context, String id) {
+        if (id.isEmpty()) return false;
+        try {
+            long now = System.currentTimeMillis();
+            JSONObject old = new JSONObject(AppPrefs.get(context).getString("command_receipts", "{}"));
+            if (old.has(id)) return false;
+            JSONObject recent = new JSONObject();
+            java.util.Iterator<String> keys = old.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                if (now - old.optLong(key) < 7L * 24L * 60L * 60L * 1000L) recent.put(key, old.optLong(key));
+            }
+            // Refuse new work rather than evict a live receipt and risk replaying a write.
+            if (recent.length() >= 5000) return false;
+            recent.put(id, now);
+            return AppPrefs.get(context).edit().putString("command_receipts", recent.toString()).commit();
+        } catch (Exception e) { return false; }
+    }
+
     private static boolean isAppGateAction(String action) {
         return "lock_app".equals(action) || "unlock_app".equals(action) || "temporary_unlock_app".equals(action) || "extend_lock".equals(action) || "deny_unlock_request".equals(action) || "get_lock_state".equals(action) || "set_emergency_passphrase".equals(action) || "add_locked_app".equals(action) || "remove_locked_app".equals(action) || "list_lockable_apps".equals(action);
     }
@@ -207,31 +291,32 @@ public class CompanionService extends Service {
         JSONObject out = new JSONObject();
         boolean ok = false; String result = "";
         try {
-            ScreenshotService svc = ScreenshotService.getInstance();
+            ScreenshotService svc = AccessibilityStatus.ready(ctx) ? ScreenshotService.getInstance() : null;
             if ("wait".equals(action)) { ok = true; result = "wait";
             } else if ("get_life_state".equals(action)) { ok = true; result = LifeState.collect(ctx).toString();
             } else if (isAppGateAction(action)) { JSONObject rr = AppGate.handleCommand(ctx, new JSONObject().put("action", action).put("app", app).put("package", pkg)); ok = rr.optBoolean("ok", false); result = rr.optString("result", rr.toString());
             } else if ("get_screen_nodes".equals(action)) {
                 if (svc != null) { svc.refreshScreenModel(); ok = true; result = svc.getScreenNodesJsonNow(); }
-                else result = "accessibility service not ready";
+                else result = AccessibilityStatus.explanation(ctx);
             } else if ("tap_text".equals(action)) {
                 if (svc != null) { JSONObject rr = svc.tapText(targetText, match, index); ok = rr.optBoolean("ok", false); result = rr.toString(); }
-                else result = "accessibility service not ready";
+                else result = AccessibilityStatus.explanation(ctx);
             } else if ("input_text".equals(action)) {
                 if (svc != null) { JSONObject rr = svc.inputText(inputText, append); ok = rr.optBoolean("ok", false); result = rr.toString(); }
-                else result = "accessibility service not ready";
+                else result = AccessibilityStatus.explanation(ctx);
             } else if ("peek".equals(action)) {
-                if (svc != null) { svc.doScreenshot(serverUrl, token); ok = true; result = "screenshot requested"; }
-                else result = "accessibility service not ready";
+                if (svc != null && Build.VERSION.SDK_INT >= 30) { svc.doScreenshot(serverUrl, token); ok = true; result = "accessibility_screenshot_requested"; }
+                else if (ProjectionCaptureService.ready()) { ok = ProjectionCaptureService.capture(serverUrl, token); result = ok ? "projection_screenshot_requested" : "projection_capture_busy"; }
+                else result = "录屏授权未建立或已失效，请在手机重新授权；" + AccessibilityStatus.explanation(ctx);
             } else if ("open_app".equals(action)) {
                 if (pkg == null || pkg.length() == 0) pkg = AppPrefs.packageForApp(ctx, app);
                 result = openPackageResult(ctx, pkg);
                 ok = result.startsWith("opened_");
-            } else if ("home".equals(action)) { ok = svc != null && svc.doHome(); result = ok ? "home" : "home_failed_or_accessibility_missing";
-            } else if ("back".equals(action)) { ok = svc != null && svc.doBack(); result = ok ? "back" : "back_failed_or_accessibility_missing";
-            } else if ("recents".equals(action)) { ok = svc != null && svc.doRecents(); result = ok ? "recents" : "recents_failed_or_accessibility_missing";
-            } else if ("tap".equals(action)) { ok = svc != null && svc.doTap(x, y); result = ok ? ("tap:" + x + "," + y) : "tap_failed_or_accessibility_missing";
-            } else if ("swipe".equals(action)) { ok = svc != null && svc.doSwipe(x1, y1, x2, y2, duration); result = ok ? "swipe" : "swipe_failed_or_accessibility_missing";
+            } else if ("home".equals(action)) { ok = svc != null && svc.doHome(); result = ok ? "home" : (svc == null ? AccessibilityStatus.explanation(ctx) : "home_failed");
+            } else if ("back".equals(action)) { ok = svc != null && svc.doBack(); result = ok ? "back" : (svc == null ? AccessibilityStatus.explanation(ctx) : "back_failed");
+            } else if ("recents".equals(action)) { ok = svc != null && svc.doRecents(); result = ok ? "recents" : (svc == null ? AccessibilityStatus.explanation(ctx) : "recents_failed");
+            } else if ("tap".equals(action)) { ok = svc != null && svc.doTap(x, y); result = ok ? ("tap:" + x + "," + y) : (svc == null ? AccessibilityStatus.explanation(ctx) : "tap_failed");
+            } else if ("swipe".equals(action)) { ok = svc != null && svc.doSwipe(x1, y1, x2, y2, duration); result = ok ? "swipe" : (svc == null ? AccessibilityStatus.explanation(ctx) : "swipe_failed");
             } else if ("set_alarm".equals(action)) { ok = setAlarm(ctx, hour, minute, message, vibrate, skipUi); result = ok ? "alarm " + hour + ":" + minute : "cannot set alarm";
             } else if ("send_notification".equals(action)) { ok = showReminderNotification(ctx, title, message); result = ok ? "heads_up_notification_sent" : "notification permission missing";
             } else { ok = true; result = "noop"; }
@@ -415,6 +500,7 @@ public class CompanionService extends Service {
     private static void uploadState(String serverUrl, String token, Context ctx) throws Exception {
         JSONObject state = LifeState.collect(ctx);
         postJson(serverUrl + "/api/device/state", token, state);
+        AppPrefs.get(ctx).edit().putLong(AppPrefs.KEY_LAST_SYNC_MS, System.currentTimeMillis()).apply();
         ActiveReminder.evaluate(ctx, state);
         HomeMode.evaluate(ctx, state);
     }
@@ -426,15 +512,18 @@ public class CompanionService extends Service {
     }
 
     private static String postJson(String urlStr, String token, JSONObject obj) throws Exception {
-        HttpURLConnection conn = (HttpURLConnection)new URL(urlStr).openConnection(); conn.setConnectTimeout(10000); conn.setReadTimeout(15000); conn.setRequestMethod("POST"); conn.setRequestProperty("Content-Type", "application/json; charset=utf-8"); conn.setRequestProperty("X-Auth-Token", token); conn.setDoOutput(true);
-        byte[] data = obj.toString().getBytes(StandardCharsets.UTF_8); try (OutputStream os = conn.getOutputStream()) { os.write(data); }
-        int code = conn.getResponseCode();
-        InputStream is = code >= 400 ? conn.getErrorStream() : conn.getInputStream();
-        ByteArrayOutputStream bos = new ByteArrayOutputStream(); if (is != null) { byte[] buf = new byte[1024]; int n; while ((n = is.read(buf)) > 0) bos.write(buf,0,n); }
-        String body = new String(bos.toByteArray(), "UTF-8");
-        conn.disconnect();
-        if (code >= 400) throw new IllegalStateException("HTTP " + code + " " + ScreenshotService.clip(body));
-        return body;
+        HttpURLConnection conn = (HttpURLConnection)new URL(urlStr).openConnection();
+        try {
+            conn.setConnectTimeout(10000); conn.setReadTimeout(15000); conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            conn.setRequestProperty("X-Auth-Token", token); conn.setDoOutput(true);
+            byte[] data = obj.toString().getBytes(StandardCharsets.UTF_8);
+            try (OutputStream os = conn.getOutputStream()) { os.write(data); }
+            int code = conn.getResponseCode();
+            String body = ScreenshotService.readBody(conn, code);
+            if (code < 200 || code >= 300) throw new HttpFailure(code);
+            return body;
+        } finally { conn.disconnect(); }
     }
 
     private void createNotificationChannel() { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { NotificationManager nm = getSystemService(NotificationManager.class); NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "掌心窗", NotificationManager.IMPORTANCE_LOW); channel.setDescription("掌心窗正在等待你授权的截图与手机动作请求"); nm.createNotificationChannel(channel); NotificationChannel reminder = new NotificationChannel(REMINDER_CHANNEL_ID, "掌心窗悬浮横幅提醒", NotificationManager.IMPORTANCE_HIGH); reminder.setDescription("来自掌心窗的悬浮横幅、生活提醒与回家模式"); reminder.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC); reminder.enableVibration(true); nm.createNotificationChannel(reminder); } }
@@ -445,7 +534,12 @@ public class CompanionService extends Service {
     }
 
     @Override public void onDestroy() {
-        running = false;
+        active = false; running = false;
+        commands.shutdownNow();
+        if (connectivity != null && networkCallback != null) {
+            try { connectivity.unregisterNetworkCallback(networkCallback); } catch (RuntimeException ignored) { }
+        }
+        CurboxClient.stop();
         DebugState.append(this, "服务已销毁/停止");
         if (pollHandler != null) pollHandler.removeCallbacksAndMessages(null);
         if (pollThread != null) pollThread.quitSafely();

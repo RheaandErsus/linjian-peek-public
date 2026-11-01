@@ -18,8 +18,10 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+
 
 /** Thin, allowlisted Binder bridge to Curbox. Curbox remains the local enforcement engine. */
 public final class CurboxClient {
@@ -28,9 +30,14 @@ public final class CurboxClient {
     private static final String RELEASE_PACKAGE = "neth.iecal.curbox";
 
     private static final Object LOCK = new Object();
-    private static final ExecutorService IO = Executors.newSingleThreadExecutor();
+    private static final BoundedCalls IO = new BoundedCalls();
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private static volatile long generation, statusAt, statusElapsed, nextBind, bindStarted, lastRefresh;
+    private static volatile boolean bound, refreshPending, stopped;
+    private static int bindFailures;
     private static volatile ICurboxApi api;
     private static volatile Context appContext;
+    private static final Runnable RETRY = () -> ensureBound(appContext);
     private static volatile boolean bindingRequested;
     private static volatile boolean connected;
     private static volatile boolean granted;
@@ -43,53 +50,74 @@ public final class CurboxClient {
 
     private static final ServiceConnection CONNECTION = new ServiceConnection() {
         @Override public void onServiceConnected(ComponentName name, IBinder service) {
-            api = ICurboxApi.Stub.asInterface(service);
-            connected = api != null;
-            lastError = "";
+            synchronized (LOCK) {
+                if (stopped) { releaseLocked(); return; }
+                api = ICurboxApi.Stub.asInterface(service); connected = api != null;
+                bindingRequested = false; nextBind = 0; generation++;
+                lastError = "";
+            }
             refreshAsync(appContext);
         }
-
-        @Override public void onServiceDisconnected(ComponentName name) {
-            api = null;
-            connected = false;
-            granted = false;
-            lastError = "Curbox 连接已断开，等待系统重连";
-        }
-
-        @Override public void onBindingDied(ComponentName name) {
-            api = null;
-            connected = false;
-            granted = false;
-            bindingRequested = false;
-            lastError = "Curbox 连接失效，正在重新连接";
-            ensureBound(appContext);
-        }
-
-        @Override public void onNullBinding(ComponentName name) {
-            api = null;
-            connected = false;
-            granted = false;
-            bindingRequested = false;
-            lastError = "Curbox 没有提供可用接口";
-        }
+        @Override public void onServiceDisconnected(ComponentName name) { connectionLost("Curbox 连接断开"); }
+        @Override public void onBindingDied(ComponentName name) { connectionLost("Curbox 绑定失效"); }
+        @Override public void onNullBinding(ComponentName name) { connectionLost("Curbox 接口不可用"); }
     };
 
-    public static void ensureBound(Context context) {
-        if (context == null) return;
+    public static void resume(Context context) {
+        stopped = false; ensureBound(context);
+    }
+
+    public static void stop() {
+        synchronized (LOCK) { stopped = true; MAIN.removeCallbacks(RETRY); releaseLocked(); }
+    }
+
+    private static void releaseLocked() {
+        generation++; api = null; connected = false; granted = false;
+        cachedStatus = ""; statusAt = 0; statusElapsed = 0;
+        if (bound && appContext != null) {
+            try { appContext.unbindService(CONNECTION); } catch (RuntimeException ignored) { }
+        }
+        bound = false; bindingRequested = false;
+    }
+
+    private static void connectionLost(String reason) {
         synchronized (LOCK) {
-            appContext = context.getApplicationContext();
-            if (bindingRequested || api != null) return;
+            releaseLocked(); lastError = reason;
+            bindFailures = Math.min(10, bindFailures + 1);
+            long delay = ReliabilityPolicy.retryDelay(2000L, bindFailures, Math.random());
+            nextBind = SystemClock.elapsedRealtime() + delay;
+            MAIN.removeCallbacks(RETRY);
+            if (!stopped && appContext != null) MAIN.postDelayed(RETRY, delay);
+        }
+    }
+
+    public static void ensureBound(Context context) {
+        if (context == null || stopped) return;
+        appContext = context.getApplicationContext();
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            MAIN.removeCallbacks(RETRY); MAIN.post(RETRY); return;
+        }
+        synchronized (LOCK) {
+            if (stopped) return;
+            long now = SystemClock.elapsedRealtime();
+            if (api != null) return;
+            if (bindingRequested) {
+                if (now - bindStarted > 15000L) connectionLost("Curbox 连接超时");
+                return;
+            }
+            if (now < nextBind) {
+                MAIN.removeCallbacks(RETRY); MAIN.postDelayed(RETRY, nextBind - now); return;
+            }
             String pkg = choosePackage(appContext);
-            if (pkg.isEmpty()) return;
+            if (pkg.isEmpty()) { connectionLost("未安装 Curbox"); return; }
             selectedPackage = pkg;
             try {
-                Intent intent = new Intent(ACTION_BIND).setPackage(pkg);
-                bindingRequested = appContext.bindService(intent, CONNECTION, Context.BIND_AUTO_CREATE);
-                if (!bindingRequested) lastError = "Curbox 连接请求被系统拒绝";
-            } catch (Exception e) {
-                bindingRequested = false;
-                lastError = "连接 Curbox 失败：" + ScreenshotService.shortMsg(e);
-            }
+                bindStarted = now;
+                bound = appContext.bindService(new Intent(ACTION_BIND).setPackage(pkg), CONNECTION, Context.BIND_AUTO_CREATE);
+                bindingRequested = bound;
+                if (!bound) connectionLost("Curbox 连接请求被拒绝");
+                else { MAIN.removeCallbacks(RETRY); MAIN.postDelayed(RETRY, 16000L); }
+            } catch (RuntimeException e) { connectionLost("Curbox 连接失败：" + e.getClass().getSimpleName()); }
         }
     }
 
@@ -129,20 +157,29 @@ public final class CurboxClient {
 
     public static void refreshAsync(Context context) {
         if (context != null) appContext = context.getApplicationContext();
+        ensureBound(context);
         final ICurboxApi remote = api;
-        if (remote == null) return;
-        IO.execute(() -> {
-            try {
-                apiVersion = remote.apiVersion();
-                granted = remote.isGranted();
-                cachedStatus = granted ? safe(remote.list("STATUS")) : "";
-                lastError = granted ? "" : "等待你在 Curbox 里授权";
-            } catch (Exception e) {
-                connected = false;
-                granted = false;
-                lastError = "读取 Curbox 失败：" + ScreenshotService.shortMsg(e);
-            }
-        });
+        final long epoch = generation;
+        synchronized (LOCK) {
+            if (stopped || remote == null || refreshPending || SystemClock.elapsedRealtime() - lastRefresh < 5000L) return;
+            refreshPending = true;
+            boolean accepted = IO.offer(() -> {
+                try {
+                    int version = remote.apiVersion();
+                    boolean permission = remote.isGranted();
+                    String status = permission ? safe(remote.list("STATUS")) : "";
+                    synchronized (LOCK) {
+                        if (epoch != generation || stopped) return;
+                        apiVersion = version; granted = permission; connected = true;
+                        bindFailures = 0;
+                        cachedStatus = status; statusAt = System.currentTimeMillis(); statusElapsed = SystemClock.elapsedRealtime();
+                        lastError = permission ? "" : "等待你在 Curbox 里授权";
+                    }
+                } catch (Exception e) { MAIN.post(() -> { if (epoch == generation) connectionLost("读取 Curbox 失败"); }); }
+                finally { synchronized (LOCK) { refreshPending = false; lastRefresh = SystemClock.elapsedRealtime(); } }
+            });
+            if (!accepted) { refreshPending = false; lastRefresh = SystemClock.elapsedRealtime(); }
+        }
     }
 
     public static JSONObject snapshot(Context context) {
@@ -153,7 +190,10 @@ public final class CurboxClient {
             out.put("connected", connected && api != null);
             out.put("granted", granted);
             out.put("api_version", apiVersion);
-            out.put("status", cachedStatus.isEmpty() ? JSONObject.NULL : new JSONObject(cachedStatus));
+            boolean fresh = ReliabilityPolicy.fresh(statusElapsed, SystemClock.elapsedRealtime(), 60000L);
+            out.put("status", !fresh || cachedStatus.isEmpty() ? JSONObject.NULL : new JSONObject(cachedStatus));
+            out.put("status_observed_at_ms", statusAt);
+            out.put("status_fresh", fresh);
             out.put("remote_relaxation_allowed", context != null && AppPrefs.get(context).getBoolean(AppPrefs.KEY_CURBOX_ALLOW_REMOTE_RELAX, false));
             out.put("error", lastError);
         } catch (Exception ignored) { }
@@ -174,7 +214,7 @@ public final class CurboxClient {
         JSONObject status = s.optJSONObject("status");
         String focus = status != null && status.optBoolean("focusActive")
                 ? "专注中 · " + status.optString("focusGroup", "") + " · 剩余 " + status.optInt("focusRemainingMinutes", 0) + " 分钟"
-                : "当前未开启专注";
+                : (status == null ? "专注状态未知或已过期，等待读取" : "当前未开启专注");
         return "Curbox API v" + s.optInt("api_version", 0) + " · 已授权\n" + focus
                 + "\n远程解除限制：" + (s.optBoolean("remote_relaxation_allowed") ? "允许" : "关闭（更安全）");
     }
@@ -239,7 +279,7 @@ public final class CurboxClient {
             }
             String result = callExecute(command, args);
             boolean ok = "OK".equals(result);
-            out.put("ok", ok); out.put("result", result == null ? "Curbox 未连接或未授权" : result); out.put("command", command);
+            out.put("ok", ok); out.put("result", result == null ? "Curbox 写命令结果未知或未执行；不得自动重放，请先查询状态" : result); out.put("command", command);
         } catch (Exception e) {
             try { out.put("ok", false); out.put("result", ScreenshotService.shortMsg(e)); } catch (Exception ignored) { }
         }
@@ -258,24 +298,35 @@ public final class CurboxClient {
                 || "UI_HIDER_SCRIPTS".equals(kind);
     }
 
-    private static String callExecute(String command, Bundle args) {
+    private static String invoke(String kind, String value, Bundle args) {
         ICurboxApi remote = api;
-        if (remote == null || !granted) return null;
-        try { String value = remote.execute(command, args); refreshAsync(appContext); return value; }
-        catch (Exception e) { lastError = ScreenshotService.shortMsg(e); return null; }
+        long epoch = generation;
+        if (stopped || remote == null || !granted) return null;
+        try {
+            String result = IO.call(() -> {
+                if (stopped || epoch != generation || ("execute".equals(kind) && AppPrefs.userStopped(appContext))) return null;
+                if ("execute".equals(kind)) return remote.execute(value, args);
+                if ("query".equals(kind)) return remote.query(value);
+                return remote.list(value);
+            }, 4000L);
+            if (epoch != generation) return null;
+            if ("list".equals(kind) && "STATUS".equals(value) && result != null) {
+                cachedStatus = result; statusAt = System.currentTimeMillis(); statusElapsed = SystemClock.elapsedRealtime();
+            }
+            if ("execute".equals(kind)) { cachedStatus = ""; statusAt = 0; statusElapsed = 0; }
+            return result;
+        } catch (Exception e) {
+            lastError = "Curbox 调用未确认（" + e.getClass().getSimpleName() + "），写命令不会自动重放";
+            if (!(e instanceof java.util.concurrent.RejectedExecutionException)) {
+                MAIN.post(() -> { if (epoch == generation) connectionLost("Curbox 调用失败或超时；先查询真实状态"); });
+            }
+            return null;
+        }
     }
 
-    private static String callQuery(String state) {
-        ICurboxApi remote = api;
-        if (remote == null || !granted) return null;
-        try { return remote.query(state); } catch (Exception e) { lastError = ScreenshotService.shortMsg(e); return null; }
-    }
-
-    private static String callList(String kind) {
-        ICurboxApi remote = api;
-        if (remote == null || !granted) return null;
-        try { return remote.list(kind); } catch (Exception e) { lastError = ScreenshotService.shortMsg(e); return null; }
-    }
+    private static String callExecute(String command, Bundle args) { return invoke("execute", command, args); }
+    private static String callQuery(String state) { return invoke("query", state, null); }
+    private static String callList(String kind) { return invoke("list", kind, null); }
 
     private static String safe(String value) { return value == null ? "" : value; }
 }

@@ -21,10 +21,9 @@ public class ServiceWatchdogJob extends JobService {
             if (scheduler == null) return;
             JobInfo job = new JobInfo.Builder(PERIODIC_JOB_ID, new ComponentName(context, ServiceWatchdogJob.class))
                     .setPersisted(true)
-                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
                     .setPeriodic(FIFTEEN_MINUTES)
                     .build();
-            scheduler.schedule(job);
+            if (!AppPrefs.userStopped(context)) scheduler.schedule(job);
         } catch (Exception e) {
             DebugState.append(context, "安排周期看门狗失败：" + ScreenshotService.shortMsg(e));
         }
@@ -37,9 +36,8 @@ public class ServiceWatchdogJob extends JobService {
             JobInfo job = new JobInfo.Builder(RECOVERY_JOB_ID, new ComponentName(context, ServiceWatchdogJob.class))
                     .setMinimumLatency(Math.max(1_000L, delayMs))
                     .setOverrideDeadline(Math.max(10_000L, delayMs + 10_000L))
-                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
                     .build();
-            scheduler.schedule(job);
+            if (!AppPrefs.userStopped(context)) scheduler.schedule(job);
         } catch (Exception e) {
             DebugState.append(context, "安排快速恢复失败：" + ScreenshotService.shortMsg(e));
         }
@@ -47,7 +45,13 @@ public class ServiceWatchdogJob extends JobService {
 
     public static void ensureRunning(Context context, String source) {
         if (context == null || AppPrefs.userStopped(context) || !AppPrefs.hasConnectionConfig(context)) return;
+        if (CompanionService.loopFresh()) return;
+        long now = android.os.SystemClock.elapsedRealtime();
+        long last = AppPrefs.get(context).getLong("last_recovery_elapsed", 0L);
+        if (!"manual".equals(source) && last > 0 && now >= last && now - last < 60000L) return;
+        AppPrefs.get(context).edit().putLong("last_recovery_elapsed", now).apply();
         try {
+            if (CompanionService.isRunning()) context.stopService(new Intent(context, CompanionService.class));
             Intent service = new Intent(context, CompanionService.class);
             service.putExtra("server_url", AppPrefs.server(context));
             service.putExtra("token", AppPrefs.token(context));
@@ -61,9 +65,13 @@ public class ServiceWatchdogJob extends JobService {
 
     @Override public boolean onStartJob(JobParameters params) {
         ensureRunning(this, params != null && params.getJobId() == PERIODIC_JOB_ID ? "periodic" : "recovery");
-        jobFinished(params, false);
         return false;
     }
 
-    @Override public boolean onStopJob(JobParameters params) { return true; }
+    public static void cancel(Context context) {
+        JobScheduler scheduler = (JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE);
+        if (scheduler != null) { scheduler.cancel(PERIODIC_JOB_ID); scheduler.cancel(RECOVERY_JOB_ID); }
+    }
+
+    @Override public boolean onStopJob(JobParameters params) { return !AppPrefs.userStopped(this); }
 }

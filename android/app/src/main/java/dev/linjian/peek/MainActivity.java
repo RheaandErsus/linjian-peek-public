@@ -41,8 +41,9 @@ import java.util.Calendar;
 
 public class MainActivity extends Activity {
     private static final int REQUEST_CURBOX_PERMISSION = 42;
-    private static final String APP_VERSION_NAME = "0.4.0";
-    private static final int APP_VERSION_CODE = 40000;
+    private static final int REQUEST_PROJECTION = 43;
+    private static final String APP_VERSION_NAME = "0.4.1";
+    private static final int APP_VERSION_CODE = 40001;
     private static final String DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/linzhi-524/linjian-peek-public/main/update.json";
     private int latestVersionCode = APP_VERSION_CODE;
     private String latestVersionName = APP_VERSION_NAME;
@@ -80,24 +81,30 @@ public class MainActivity extends Activity {
         setContentView(R.layout.activity_main);
         bindViews();
         loadSettings();
-        CurboxClient.ensureBound(this);
+        CurboxClient.resume(this);
         CurboxClient.refreshAsync(this);
 
-        DebugState.append(this, "掌心窗·守护版 v0.4.0 已打开");
+        DebugState.append(this, "掌心窗·守护版 v0.4.1 已打开");
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 13);
         serviceRunning = CompanionService.isRunning();
         updateUI();
 
         if (accessibilityButton != null) accessibilityButton.setOnClickListener(v -> openAccessibilitySettings());
         if (usageAccessButton != null) usageAccessButton.setOnClickListener(v -> openUsageAccessSettings());
-        if (toggleButton != null) toggleButton.setOnClickListener(v -> { if (serviceRunning) stopCompanionService(); else startCompanionService(); });
+        findViewById(R.id.batterySettingsButton).setOnClickListener(v -> requestIgnoreBatteryOptimization());
+        findViewById(R.id.vivoStartupButton).setOnClickListener(v -> openVivoStartup());
+        findViewById(R.id.projectionButton).setOnClickListener(v -> {
+            if (ProjectionCaptureService.ready()) stopService(new Intent(this, ProjectionCaptureService.class));
+            else requestProjection(false);
+        });
+        if (toggleButton != null) toggleButton.setOnClickListener(v -> { if (serviceRunning || !AppPrefs.userStopped(this)) stopCompanionService(); else startCompanionService(); });
         if (refreshLifeButton != null) refreshLifeButton.setOnClickListener(v -> { saveSettings(); updateUI(); Toast.makeText(this, "已刷新生活总览", Toast.LENGTH_SHORT).show(); });
         if (testButton != null) testButton.setOnClickListener(v -> testScreenshot());
         if (openXhsButton != null) openXhsButton.setOnClickListener(v -> openPackage(AppPrefs.packageForApp(this, "小红书")));
         if (openChatGptButton != null) openChatGptButton.setOnClickListener(v -> openPackage(AppPrefs.packageForApp(this, "ChatGPT")));
-        if (homeButton != null) homeButton.setOnClickListener(v -> { ScreenshotService svc = ScreenshotService.getInstance(); toast(svc != null && svc.doHome()); });
-        if (backButton != null) backButton.setOnClickListener(v -> { ScreenshotService svc = ScreenshotService.getInstance(); toast(svc != null && svc.doBack()); });
-        if (recentsButton != null) recentsButton.setOnClickListener(v -> { ScreenshotService svc = ScreenshotService.getInstance(); toast(svc != null && svc.doRecents()); });
+        if (homeButton != null) homeButton.setOnClickListener(v -> { ScreenshotService svc = AccessibilityStatus.ready(this) ? ScreenshotService.getInstance() : null; toast(svc != null && svc.doHome()); });
+        if (backButton != null) backButton.setOnClickListener(v -> { ScreenshotService svc = AccessibilityStatus.ready(this) ? ScreenshotService.getInstance() : null; toast(svc != null && svc.doBack()); });
+        if (recentsButton != null) recentsButton.setOnClickListener(v -> { ScreenshotService svc = AccessibilityStatus.ready(this) ? ScreenshotService.getInstance() : null; toast(svc != null && svc.doRecents()); });
         if (alarmTestButton != null) alarmTestButton.setOnClickListener(v -> testAlarm());
         if (notifyTestButton != null) notifyTestButton.setOnClickListener(v -> testNotification());
         if (addPackageButton != null) addPackageButton.setOnClickListener(v -> addPackageAlias());
@@ -249,7 +256,7 @@ public class MainActivity extends Activity {
     }
     private void updateHeader(String tab) {
         if (headerTitle == null || headerSubtitle == null) return;
-        if ("life".equals(tab)) { headerTitle.setText("掌心窗"); headerSubtitle.setText("守护版 v0.4.0 · 后台桥与 Curbox 联动。"); }
+        if ("life".equals(tab)) { headerTitle.setText("掌心窗"); headerSubtitle.setText("守护版 v0.4.1 · 后台桥与 Curbox 联动。"); }
         else if ("see".equals(tab)) { headerTitle.setText("看见"); headerSubtitle.setText("把屏幕递给老公，看见就收在这里。"); }
         else if ("gate".equals(tab)) { headerTitle.setText("守护"); headerSubtitle.setText("门禁、天气和提醒，平时收进抽屉。"); }
         else { headerTitle.setText("设置"); headerSubtitle.setText("主题、权限和调试都放这里。"); }
@@ -365,11 +372,21 @@ public class MainActivity extends Activity {
 
     private int dp(float v) { return (int) (v * getResources().getDisplayMetrics().density + 0.5f); }
 
-    @Override protected void onResume() { super.onResume(); serviceRunning = CompanionService.isRunning(); CurboxClient.ensureBound(this); CurboxClient.refreshAsync(this); updateUI(); uiHandler.removeCallbacks(refreshTick); uiHandler.post(refreshTick); }
-    @Override protected void onPause() { uiHandler.removeCallbacks(refreshTick); super.onPause(); }
+    @Override protected void onResume() { super.onResume(); if (!AppPrefs.userStopped(this)) ServiceWatchdogJob.ensureRunning(this, "activity"); serviceRunning = CompanionService.isRunning(); CurboxClient.resume(this); CurboxClient.refreshAsync(this); updateUI(); uiHandler.removeCallbacks(refreshTick); uiHandler.post(refreshTick); }
+    @Override protected void onPause() { uiHandler.removeCallbacks(refreshTick); if (AppPrefs.userStopped(this)) CurboxClient.stop(); super.onPause(); }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_PROJECTION) {
+            if (resultCode == RESULT_OK && data != null) {
+                Intent session = new Intent(this, ProjectionCaptureService.class).putExtra("grant", data)
+                        .putExtra("result_code", resultCode).putExtra("capture_now", captureAfterConsent);
+                try { if (Build.VERSION.SDK_INT >= 26) startForegroundService(session); else startService(session); }
+                catch (RuntimeException e) { Toast.makeText(this, "无法建立录屏会话，请重新授权", Toast.LENGTH_LONG).show(); }
+            } else Toast.makeText(this, "录屏未授权；远程桥与 Curbox 可继续使用", Toast.LENGTH_LONG).show();
+            captureAfterConsent = false;
+            return;
+        }
         if (requestCode == REQUEST_CURBOX_PERMISSION) {
             CurboxClient.ensureBound(this);
             CurboxClient.refreshAsync(this);
@@ -392,21 +409,49 @@ public class MainActivity extends Activity {
         saveSettings();
         String url = serverUrl == null ? "" : serverUrl.getText().toString().trim(); String token = tokenInput == null ? "" : tokenInput.getText().toString().trim();
         if (url.isEmpty() || token.isEmpty()) { Toast.makeText(this, "请填写服务器地址和 Token", Toast.LENGTH_SHORT).show(); return; }
-        if (ScreenshotService.getInstance() == null) { DebugState.append(this, "启动失败：无障碍服务未连接"); Toast.makeText(this, "请先开启掌心窗无障碍服务", Toast.LENGTH_LONG).show(); openAccessibilitySettings(); return; }
-        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", false).apply(); requestIgnoreBatteryOptimization();
-        Intent intent = new Intent(this, CompanionService.class); intent.putExtra("server_url", url); intent.putExtra("token", token);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent); else startService(intent);
-        DebugState.append(this, "已请求启动前台服务：守护版 v0.4.0"); serviceRunning = true; updateUI();
+        if (!AppPrefs.get(this).edit().putBoolean(AppPrefs.KEY_USER_STOPPED, false).commit()) {
+            Toast.makeText(this, "无法保存启动状态，请重试", Toast.LENGTH_LONG).show(); return;
+        }
+        ServiceWatchdogJob.ensureRunning(this, "manual");
+        DebugState.append(this, "已请求启动远程桥；截图与手势能力独立检查");
+        serviceRunning = CompanionService.isRunning(); updateUI();
     }
 
-    private void stopCompanionService() { getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", true).apply(); stopService(new Intent(this, CompanionService.class)); DebugState.append(this, "已停止服务"); serviceRunning = false; updateUI(); }
+    private void stopCompanionService() {
+        if (!AppPrefs.get(this).edit().putBoolean(AppPrefs.KEY_USER_STOPPED, true).commit()) {
+            Toast.makeText(this, "停止标记保存失败，请重试", Toast.LENGTH_LONG).show(); return;
+        }
+        ServiceWatchdogJob.cancel(this);
+        stopService(new Intent(this, CompanionService.class)); CurboxClient.stop();
+        DebugState.append(this, "远程桥已主动停止，不自动拉起；截图授权可单独结束");
+        serviceRunning = false; updateUI();
+    }
 
     private void testScreenshot() {
         saveSettings(); String url = serverUrl == null ? "" : serverUrl.getText().toString().trim(); String token = tokenInput == null ? "" : tokenInput.getText().toString().trim(); ScreenshotService ss = ScreenshotService.getInstance();
         if (url.isEmpty() || token.isEmpty()) { Toast.makeText(this, "先填服务器地址和 Token", Toast.LENGTH_SHORT).show(); return; }
-        if (ss == null) { DebugState.append(this, "测试失败：无障碍服务未连接"); Toast.makeText(this, "先开启无障碍服务", Toast.LENGTH_LONG).show(); openAccessibilitySettings(); return; }
-        DebugState.append(this, "给老公看一眼：开始截图上传"); ss.doScreenshot(url, token); Toast.makeText(this, "正在给老公看一眼", Toast.LENGTH_SHORT).show(); updateUI();
+        if (ProjectionCaptureService.ready()) {
+            boolean accepted = ProjectionCaptureService.capture(url, token);
+            Toast.makeText(this, accepted ? "正在通过录屏授权截图上传" : "截图处理中，请稍后", Toast.LENGTH_SHORT).show();
+        } else if (ss != null && AccessibilityStatus.ready(this) && Build.VERSION.SDK_INT >= 30) {
+            ss.doScreenshot(url, token);
+            Toast.makeText(this, "正在给老公看一眼", Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(this, "录屏授权未建立或已失效，请重新授权；手势仍需无障碍", Toast.LENGTH_LONG).show();
+            requestProjection(true);
+        }
+        updateUI();
     }
+
+    private boolean captureAfterConsent;
+    private void requestProjection(boolean captureNow) {
+        try {
+            captureAfterConsent = captureNow;
+            android.media.projection.MediaProjectionManager manager = (android.media.projection.MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+            startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_PROJECTION);
+        } catch (RuntimeException e) { Toast.makeText(this, "无法打开录屏授权，请检查系统权限", Toast.LENGTH_LONG).show(); }
+    }
+
     private void testAlarm() { Calendar c = Calendar.getInstance(); c.add(Calendar.MINUTE, 1); try { Intent i = new Intent(AlarmClock.ACTION_SET_ALARM); i.putExtra(AlarmClock.EXTRA_HOUR, c.get(Calendar.HOUR_OF_DAY)); i.putExtra(AlarmClock.EXTRA_MINUTES, c.get(Calendar.MINUTE)); i.putExtra(AlarmClock.EXTRA_MESSAGE, "掌心窗测试闹钟：宝宝看到了就说明成功"); i.putExtra(AlarmClock.EXTRA_VIBRATE, true); i.putExtra(AlarmClock.EXTRA_SKIP_UI, true); startActivity(i); DebugState.append(this, "已请求设置一分钟后的测试闹钟"); } catch (Exception e) { DebugState.append(this, "测试闹钟失败：" + e.getClass().getSimpleName()); Toast.makeText(this, "闹钟 App 没接住请求", Toast.LENGTH_SHORT).show(); } }
     private void testNotification() { saveSettings(); boolean ok = CompanionService.showReminderNotification(this, "掌心窗悬浮横幅测试", "宝宝看到了顶部横幅，就说明通知通道正常。"); DebugState.append(this, ok ? "已发送悬浮横幅测试提醒" : "悬浮横幅/通知失败：请允许掌心窗发送通知"); Toast.makeText(this, ok ? "已发送横幅测试" : "请先允许通知权限", Toast.LENGTH_SHORT).show(); updateUI(); }
     private void addPackageAlias() { String alias = appAliasInput == null ? "" : appAliasInput.getText().toString().trim(); String pkg = appPackageInput == null ? "" : appPackageInput.getText().toString().trim(); if (alias.isEmpty()) { Toast.makeText(this, "先填应用名/昵称", Toast.LENGTH_SHORT).show(); return; } if (!AppPrefs.isPackageLike(pkg)) { Toast.makeText(this, "包名格式不对，例如 com.xingin.xhs", Toast.LENGTH_LONG).show(); return; } AppPrefs.saveCustomApp(this, alias, pkg); DebugState.append(this, "已保存可打开应用：" + alias + " → " + pkg); Toast.makeText(this, "已添加包名", Toast.LENGTH_SHORT).show(); updateUI(); }
@@ -419,8 +464,33 @@ public class MainActivity extends Activity {
     private int parseInt(String raw, int def, int min, int max) { try { int v = Integer.parseInt(raw); if (v < min) return min; if (v > max) return max; return v; } catch (Exception e) { return def; } }
     private void openAccessibilitySettings() { try { startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)); } catch (Exception e) { Toast.makeText(this, "设置 → 无障碍 → 掌心窗", Toast.LENGTH_LONG).show(); } }
     private void openUsageAccessSettings() { try { startActivity(new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)); } catch (Exception e) { Toast.makeText(this, "设置 → 应用 → 特殊权限 → 使用情况访问", Toast.LENGTH_LONG).show(); } }
-    private void requestIgnoreBatteryOptimization() { if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return; try { PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE); if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) { Intent bi = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS); bi.setData(Uri.parse("package:" + getPackageName())); startActivity(bi); } } catch (Exception ignored) { } }
+    private boolean openFirst(Intent... candidates) {
+        for (Intent candidate : candidates) {
+            try { startActivity(candidate); return true; } catch (RuntimeException ignored) { }
+        }
+        Toast.makeText(this, "无法打开设置，请从系统设置搜索应用名称", Toast.LENGTH_LONG).show(); return false;
+    }
 
+    private Intent appDetails() { return new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName())); }
+
+    private void requestIgnoreBatteryOptimization() {
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        if (pm != null && pm.isIgnoringBatteryOptimizations(getPackageName())) {
+            Toast.makeText(this, "已忽略系统电池优化；vivo 自启动需另行确认", Toast.LENGTH_LONG).show(); return;
+        }
+        openFirst(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName())),
+                new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS), appDetails(), new Intent(Settings.ACTION_SETTINGS));
+    }
+
+    private void openVivoStartup() {
+        new android.app.AlertDialog.Builder(this).setTitle("vivo 后台运行设置")
+                .setMessage("请手动核对：\n设置 → 应用与权限 → 权限管理 → 权限 → 自启动，允许掌心窗；\n设置 → 电池 → 后台耗电管理/后台高耗电，允许后台运行。\n菜单以本机为准，也可在多任务界面给掌心窗加锁。应用无法可靠读取自启动开关，需你确认。无障碍若被关闭仍需手动开启。")
+                .setPositiveButton("打开设置", (dialog, which) -> openFirst(
+                        new Intent().setComponent(new android.content.ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")),
+                        new Intent().setComponent(new android.content.ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity")),
+                        new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS), appDetails(), new Intent(Settings.ACTION_SETTINGS)))
+                .setNegativeButton("稍后", null).show();
+    }
 
     private void prepareWindowForFullContent() {
         try {
@@ -543,10 +613,33 @@ public class MainActivity extends Activity {
         }
     }
 
+    private String formatSyncTime(long time) {
+        return time <= 0 ? "尚未成功" : new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.CHINA).format(new java.util.Date(time));
+    }
+
     private void updateUI() {
-        boolean accessibilityOk = ScreenshotService.getInstance() != null; boolean usageOk = LifeState.hasUsagePermission(this);
-        if (serviceRunning) { if (statusText != null) { statusText.setText(accessibilityOk ? "已连接 · 看见、控制和守护待命" : "生活小窗已打开 · 无障碍待开启"); statusText.setTextColor(accessibilityOk ? 0xFF2E9D72 : 0xFFFF9800); } if (toggleButton != null) { toggleButton.setText("停止服务"); toggleButton.setBackgroundResource(R.drawable.pill_danger); } }
-        else { if (statusText != null) { statusText.setText(accessibilityOk ? "看见已准备 · 服务待启动" : "天气可用 · 无障碍待开启"); statusText.setTextColor(0xFF6A7B76); } if (toggleButton != null) { toggleButton.setText("启动服务"); toggleButton.setBackgroundResource(R.drawable.pill_primary); } }
+        serviceRunning = CompanionService.isRunning();
+        boolean usageOk = LifeState.hasUsagePermission(this);
+        if (statusText != null) {
+            statusText.setText(serviceRunning ? "远程桥运行中 · 网络同步状态见权限与运行" : (AppPrefs.userStopped(this) ? "远程桥已停止" : "远程桥恢复中"));
+            statusText.setTextColor(serviceRunning ? 0xFF2E9D72 : 0xFF6A7B76);
+        }
+        if (toggleButton != null) {
+            toggleButton.setText(serviceRunning || !AppPrefs.userStopped(this) ? "停止服务" : "启动服务");
+            toggleButton.setBackgroundResource(serviceRunning ? R.drawable.pill_danger : R.drawable.pill_primary);
+        }
+        PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
+        TextView capabilities = findViewById(R.id.capabilityStatusText);
+        boolean screenshotReady = ReliabilityPolicy.screenshotAvailable(AccessibilityStatus.ready(this), Build.VERSION.SDK_INT, ProjectionCaptureService.ready());
+        capabilities.setText(AccessibilityStatus.explanation(this)
+                + "\n手势：" + (AccessibilityStatus.ready(this) && Build.VERSION.SDK_INT >= 24 ? "可用" : "不可用")
+                + " · 截图：" + (screenshotReady ? "可用" : "需重新授予录屏权限或开启无障碍")
+                + "\n" + ProjectionCaptureService.status()
+                + "\n电池优化：" + (power != null && power.isIgnoringBatteryOptimizations(getPackageName()) ? "已忽略" : "未忽略")
+                + " · vivo 自启动：需人工确认"
+                + "\n最近状态同步：" + formatSyncTime(AppPrefs.get(this).getLong(AppPrefs.KEY_LAST_SYNC_MS, 0L))
+                + "\n" + AppPrefs.get(this).getString(AppPrefs.KEY_LAST_SYNC_ERROR, ""));
+        ((Button) findViewById(R.id.projectionButton)).setText(ProjectionCaptureService.ready() ? "结束录屏截图授权（节省电量）" : "授予录屏截图权限");
         if (usageAccessButton != null) usageAccessButton.setText(usageOk ? "使用情况权限：已开启" : "打开使用情况访问权限");
         try {
             JSONObject s = LifeState.collect(this);

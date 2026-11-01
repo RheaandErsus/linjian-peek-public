@@ -33,6 +33,29 @@ import java.util.TimeZone;
 
 /** 轻量生活状态层：不截图，不读聊天内容，只上传设备状态。 */
 public class LifeState {
+    private static UsageSummary cachedUsage;
+    private static long usageElapsed, usageAt;
+    private static String usageDate = "";
+    private static boolean usagePending;
+    private static final java.util.concurrent.ExecutorService USAGE_IO = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private static synchronized UsageSummary cachedUsage(Context context, long now) {
+        String date = formatLocal(now, "yyyy-MM-dd");
+        long elapsed = android.os.SystemClock.elapsedRealtime();
+        if (!date.equals(usageDate)) { cachedUsage = null; usageAt = 0; }
+        if (!usagePending && (cachedUsage == null || !ReliabilityPolicy.fresh(usageElapsed, elapsed, 30000L))) {
+            usagePending = true;
+            Context application = context.getApplicationContext();
+            USAGE_IO.execute(() -> {
+                try {
+                    UsageSummary next = readUsage(application, now);
+                    synchronized (LifeState.class) {
+                        cachedUsage = next; usageElapsed = android.os.SystemClock.elapsedRealtime(); usageAt = now; usageDate = date;
+                    }
+                } finally { synchronized (LifeState.class) { usagePending = false; } }
+            });
+        }
+        return cachedUsage == null ? new UsageSummary() : cachedUsage;
+    }
     public static JSONObject collect(Context ctx) {
         JSONObject state = new JSONObject();
         try {
@@ -54,14 +77,15 @@ public class LifeState {
 
             PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
             boolean screenOn = pm != null && (Build.VERSION.SDK_INT >= 20 ? pm.isInteractive() : pm.isScreenOn());
-            String currentPackage = ScreenshotService.currentPackage();
+            boolean accessibilityReady = AccessibilityStatus.ready(ctx);
+            String currentPackage = accessibilityReady ? ScreenshotService.currentPackage() : "";
             String currentApp = appLabel(ctx, currentPackage);
             boolean usageReady = hasUsagePermission(ctx);
-            UsageSummary usage = usageReady ? readUsage(ctx, now) : new UsageSummary();
+            UsageSummary usage = usageReady ? cachedUsage(ctx, now) : new UsageSummary();
             SharedPreferencesCompat prefs = new SharedPreferencesCompat(ctx);
 
             state.put("device_id", AppPrefs.device(ctx));
-            state.put("life_state_version", "0.4.0");
+            state.put("life_state_version", "0.4.1");
             state.put("local_time", formatLocal(now, "HH:mm"));
             state.put("local_date", formatLocal(now, "yyyy-MM-dd"));
             state.put("timezone", TimeZone.getDefault().getID());
@@ -74,12 +98,17 @@ public class LifeState {
             state.put("screen_on", screenOn);
             state.put("current_package", currentPackage);
             state.put("current_app", currentApp);
-            state.put("accessibility_ready", ScreenshotService.ready());
+            state.put("accessibility_ready", accessibilityReady);
+            state.put("capabilities", AccessibilityStatus.snapshot(ctx));
+            state.put("usage_observed_at_ms", usageReady ? usageAt : 0L);
             state.put("usage_permission_ready", usageReady);
             JSONObject runtime = new JSONObject();
             long heartbeatMs = AppPrefs.get(ctx).getLong(AppPrefs.KEY_SERVICE_HEARTBEAT_MS, 0L);
             long lastSyncMs = AppPrefs.get(ctx).getLong(AppPrefs.KEY_LAST_SYNC_MS, 0L);
             runtime.put("companion_running", CompanionService.isRunning());
+            runtime.put("loop_fresh", CompanionService.loopFresh());
+            runtime.put("last_poll_success_ms", AppPrefs.get(ctx).getLong("last_poll_success_ms", 0L));
+            runtime.put("battery_optimization_ignored", pm != null && pm.isIgnoringBatteryOptimizations(ctx.getPackageName()));
             runtime.put("user_stopped", AppPrefs.userStopped(ctx));
             runtime.put("heartbeat_at_ms", heartbeatMs);
             runtime.put("heartbeat_age_seconds", heartbeatMs <= 0 ? -1 : Math.max(0L, (now - heartbeatMs) / 1000L));
@@ -98,7 +127,7 @@ public class LifeState {
             state.put("weather_state", weatherState);
             state.put("weather_locations", weatherState.optJSONArray("locations"));
             state.put("current_weather_location", weatherState.optJSONObject("current"));
-            state.put("screen_text", ScreenshotService.screenText());
+            state.put("screen_text", accessibilityReady ? ScreenshotService.screenText() : "");
             state.put("active_reminders", ActiveReminder.config(ctx));
             state.put("home_mode", HomeMode.config(ctx));
             state.put("known_apps", AppPrefs.knownAppsJson(ctx));
@@ -115,7 +144,7 @@ public class LifeState {
         try {
             JSONObject s = collect(ctx);
             StringBuilder sb = new StringBuilder();
-            sb.append("生活状态层 v0.4.0\n");
+            sb.append("生活状态层 v0.4.1\n");
             sb.append("时间：").append(s.optString("local_time", "-")).append("  ").append(s.optString("local_date", "-")).append("\n");
             sb.append("电量：").append(s.optInt("battery_percent", -1)).append("%  ").append(s.optBoolean("charging") ? "充电中" : "未充电").append("\n");
             sb.append("网络：").append(s.optString("network_type", "-")).append("  屏幕：").append(s.optBoolean("screen_on") ? "亮" : "灭").append("\n");
